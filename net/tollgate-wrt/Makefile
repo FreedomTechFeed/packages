@@ -7,6 +7,14 @@
 # modified — its Go source lives under src/ and uses a multi-module layout
 # (the main module at src/ plus sibling sub-modules wired via `replace`).
 #
+# The runtime files (init.d, uci-defaults, nftables.d, hotplug.d, man pages,
+# captive-portal site, usr/bin helpers, keep.d) are NOT vendored into this
+# feed. They are installed directly from the SOURCE TARBALL's packaging/files/
+# directory (see $(PKG_TARBALL_DIR) below), which ships OpenWrt-shaped files
+# because upstream releases its own .ipk from the same tree. Bumping
+# PKG_VERSION pulls in the matching runtime files automatically — there is no
+# separate files/ tree to keep in sync.
+#
 # One package, two binaries:
 #   - tollgate-wrt : the service, the module-root main package at src/main.go
 #   - tollgate      : the CLI, a SEPARATE module at src/cmd/tollgate-cli/
@@ -34,6 +42,13 @@ PKG_LICENSE_FILES:=LICENSE
 # module's go.mod lives, so golang-package.mk operates on the module root and
 # the `replace ./xxx` directives resolve to sibling directories in the tree.
 PKG_BUILD_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_VERSION)/src
+
+# PKG_TARBALL_DIR is the tarball extraction root (parent of PKG_BUILD_DIR).
+# Build/Prepare extracts the WHOLE upstream tarball there, so packaging/files/
+# — the OpenWrt-shaped runtime files — survives as a sibling of src/ and can
+# be referenced by the install recipe below. Nothing is vendored into this
+# feed; the files ride along with the upstream release tarball.
+PKG_TARBALL_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_VERSION)
 
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
@@ -179,45 +194,49 @@ fi
 exit 0
 endef
 
+# Runtime files are installed from the upstream source tarball's
+# packaging/files/ directory (see PKG_TARBALL_DIR above), NOT from a vendored
+# copy checked into this feed. The binaries install lines use
+# $(GO_PKG_BUILD_BIN_DIR) and stay unchanged.
 define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/tollgate-module-basic-go $(1)/usr/bin/tollgate-wrt
 	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/tollgate-cli $(1)/usr/bin/tollgate
 
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) ./files/etc/init.d/tollgate-wrt $(1)/etc/init.d/
+	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/init.d/tollgate-wrt $(1)/etc/init.d/
 
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	$(INSTALL_BIN) ./files/etc/uci-defaults/90-tollgate-captive-portal-symlink $(1)/etc/uci-defaults/
-	$(INSTALL_BIN) ./files/etc/uci-defaults/99-tollgate-setup $(1)/etc/uci-defaults/
+	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink $(1)/etc/uci-defaults/
+	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/uci-defaults/99-tollgate-setup $(1)/etc/uci-defaults/
 
 	$(INSTALL_DIR) $(1)/etc/nftables.d
-	$(INSTALL_DATA) ./files/etc/nftables.d/20-nds-enforce.nft $(1)/etc/nftables.d/
-	$(INSTALL_DATA) ./files/etc/nftables.d/30-backend-firewall.nft $(1)/etc/nftables.d/
+	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/etc/nftables.d/20-nds-enforce.nft $(1)/etc/nftables.d/
+	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/etc/nftables.d/30-backend-firewall.nft $(1)/etc/nftables.d/
 
 	$(INSTALL_DIR) $(1)/usr/share/man/man8
-	$(INSTALL_DATA) ./files/man/man8/*.8 $(1)/usr/share/man/man8/
+	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/man/man8/*.8 $(1)/usr/share/man/man8/
 
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
-	$(INSTALL_BIN) ./files/etc/hotplug.d/iface/95-tollgate-restart $(1)/etc/hotplug.d/iface/
+	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/hotplug.d/iface/95-tollgate-restart $(1)/etc/hotplug.d/iface/
 
 	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) ./files/usr/bin/check_package_path $(1)/usr/bin/
-	$(INSTALL_BIN) ./files/usr/bin/tollgate-apply-ssl $(1)/usr/bin/
-	$(INSTALL_BIN) ./files/usr/bin/tollgate-remove-ssl $(1)/usr/bin/
+	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/usr/bin/check_package_path $(1)/usr/bin/
+	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/usr/bin/tollgate-apply-ssl $(1)/usr/bin/
+	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/usr/bin/tollgate-remove-ssl $(1)/usr/bin/
 
 	$(INSTALL_DIR) $(1)/usr/local/bin
-	$(INSTALL_BIN) ./files/usr/local/bin/first-login-setup $(1)/usr/local/bin/
+	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/usr/local/bin/first-login-setup $(1)/usr/local/bin/
 
 	$(INSTALL_DIR) $(1)/etc/tollgate/ecash
 
 	$(INSTALL_DIR) $(1)/etc/tollgate/tollgate-captive-portal-site
-	$(CP) ./files/tollgate-captive-portal-site/. $(1)/etc/tollgate/tollgate-captive-portal-site/
+	$(CP) $(PKG_TARBALL_DIR)/packaging/files/tollgate-captive-portal-site/. $(1)/etc/tollgate/tollgate-captive-portal-site/
 
 	$(INSTALL_DIR) $(1)/etc/crontabs
 
 	$(INSTALL_DIR) $(1)/lib/upgrade/keep.d
-	$(INSTALL_DATA) ./files/lib/upgrade/keep.d/tollgate $(1)/lib/upgrade/keep.d/
+	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/lib/upgrade/keep.d/tollgate $(1)/lib/upgrade/keep.d/
 endef
 
 $(eval $(call BuildPackage,tollgate-wrt))

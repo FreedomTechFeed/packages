@@ -1,4 +1,0 @@
-# This file is used to preserve configuration during sysupgrade
-/etc/config/network
-/etc/config/wireless
-/etc/tollgate
