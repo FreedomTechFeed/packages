@@ -12,8 +12,13 @@
 # feed. They are installed directly from the SOURCE TARBALL's packaging/files/
 # directory (see $(PKG_TARBALL_DIR) below), which ships OpenWrt-shaped files
 # because upstream releases its own .ipk from the same tree. Bumping
-# PKG_VERSION pulls in the matching runtime files automatically — there is no
-# separate files/ tree to keep in sync.
+# PKG_SOURCE_VERSION pulls in the matching runtime files automatically — there
+# is no separate files/ tree to keep in sync.
+#
+# Versioning: PKG_VERSION (apk-legal, underscore) names the package version
+# while PKG_SOURCE_VERSION (hyphen, upstream git tag) drives the download
+# URL/tarball name and the tag-named build dirs below — see the version block
+# for why the two are split.
 #
 # One package, two binaries:
 #   - tollgate-wrt : the service, the module-root main package at src/main.go
@@ -27,11 +32,20 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=tollgate-wrt
-PKG_VERSION:=0.6.0-alpha1
+# PKG_VERSION is the apk-legal package version. Since OpenWrt SDKs moved to
+# apk (CONFIG_USE_APK, v24.10+), include/package-pack.mk feeds
+# "version:$(VERSION)" = "$(PKG_VERSION)-r$(PKG_RELEASE)" to `apk mkpkg`, and
+# apk-tools 3.x REJECTS hyphens ("package version is invalid", make Error 99).
+# apk pre-release convention uses '_' (or '~'): 0.6.0_alpha1-r1 is accepted.
+PKG_VERSION:=0.6.0_alpha1
+# PKG_SOURCE_VERSION is the upstream git tag (hyphenated, immutable on GitHub).
+# It drives ONLY the download naming/URL and the tag-named build dirs below —
+# never the package version — so the two can differ legally.
+PKG_SOURCE_VERSION:=0.6.0-alpha1
 PKG_RELEASE:=1
 
-PKG_SOURCE:=tollgate-module-basic-go-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/v$(PKG_VERSION)?
+PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
+PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/v$(PKG_SOURCE_VERSION)?
 PKG_HASH:=c0ca1b37cbccde8e46de8e42287185d322c648bb10ad317b3e496a136a0e35f7
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
@@ -41,14 +55,17 @@ PKG_LICENSE_FILES:=LICENSE
 # PKG_BUILD_DIR points at the tarball's src/ directory: that is where the main
 # module's go.mod lives, so golang-package.mk operates on the module root and
 # the `replace ./xxx` directives resolve to sibling directories in the tree.
-PKG_BUILD_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_VERSION)/src
+# It stays tag-named (PKG_SOURCE_VERSION, hyphen) because the tarball extracts
+# to tollgate-module-basic-go-0.6.0-alpha1/ — it must NOT follow PKG_VERSION.
+PKG_BUILD_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_SOURCE_VERSION)/src
 
 # PKG_TARBALL_DIR is the tarball extraction root (parent of PKG_BUILD_DIR).
 # Build/Prepare extracts the WHOLE upstream tarball there, so packaging/files/
 # — the OpenWrt-shaped runtime files — survives as a sibling of src/ and can
 # be referenced by the install recipe below. Nothing is vendored into this
-# feed; the files ride along with the upstream release tarball.
-PKG_TARBALL_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_VERSION)
+# feed; the files ride along with the upstream release tarball. Tag-named for
+# the same reason as PKG_BUILD_DIR (see above).
+PKG_TARBALL_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_SOURCE_VERSION)
 
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
@@ -60,10 +77,12 @@ GO_PKG:=github.com/OpenTollGate/tollgate-module-basic-go
 GO_PKG_BUILD_PKG:=$(GO_PKG)
 
 # Version injection. src/cli is its own sub-module, so the import path keeps
-# the /src segment (matches how upstream's CI injects these values).
+# the /src segment (matches how upstream's CI injects these values). Tied to
+# PKG_SOURCE_VERSION so the baked-in Version/GitCommit match the upstream tag
+# (v0.6.0-alpha1 / 0.6.0-alpha1) rather than the apk-legal package version.
 GO_PKG_LDFLAGS_X:= \
-	$(GO_PKG)/src/cli.Version=v$(PKG_VERSION) \
-	$(GO_PKG)/src/cli.GitCommit=$(PKG_VERSION) \
+	$(GO_PKG)/src/cli.Version=v$(PKG_SOURCE_VERSION) \
+	$(GO_PKG)/src/cli.GitCommit=$(PKG_SOURCE_VERSION) \
 	$(GO_PKG)/src/cli.BuildTime=$(SOURCE_DATE_EPOCH)
 
 # NOTE on the golang-package.mk include path:
