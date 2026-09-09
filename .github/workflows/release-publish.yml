@@ -1,0 +1,109 @@
+name: Publish per-arch tollgate-wrt release assets
+
+# Builds tollgate-wrt for every arch the wizard can select (see
+# net4sats-wizard-go arch.go) and uploads the resulting .apk / .ipk as
+# release assets with deterministic names:
+#
+#   tollgate-wrt_<PKG_VERSION>_<arch>.apk
+#   tollgate-wrt_<PKG_VERSION>_<arch>.ipk
+#
+# e.g. tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.apk
+#
+# The wizard's tollgateArchAssets map (arch.go) points at these stable URLs,
+# so the correct binary is fetched for the detected router arch.
+#
+# Two SDK images are built per arch:
+#   - master        -> apk-tools package (.apk), OpenWrt 25+
+#   - openwrt-24.10 -> opkg package (.ipk), OpenWrt <=24.x
+# This mirrors how the wizard selects .apk vs .ipk by package manager.
+#
+# Build jobs run in parallel and upload their per-arch asset as a workflow
+# artifact; a single publish job (needs: build) downloads them all and uploads
+# to the release. This avoids the race of several matrix jobs calling
+# softprops/action-gh-release concurrently.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }} (${{ matrix.sdk }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: aarch64_cortex-a53, target: mediatek-filogic, sdk: master, ext: apk}
+          - {arch: aarch64_cortex-a53, target: mediatek-filogic, sdk: openwrt-24.10, ext: ipk}
+          - {arch: mipsel_24kc, target: mt7621, sdk: master, ext: apk}
+          - {arch: mipsel_24kc, target: mt7621, sdk: openwrt-24.10, ext: ipk}
+          - {arch: mips_24kc, target: ath79-generic, sdk: master, ext: apk}
+          - {arch: mips_24kc, target: ath79-generic, sdk: openwrt-24.10, ext: ipk}
+          - {arch: x86_64, target: x86-64, sdk: master, ext: apk}
+          - {arch: x86_64, target: x86-64, sdk: openwrt-24.10, ext: ipk}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Build tollgate-wrt with SDK
+        uses: openwrt/gh-action-sdk@v11
+        env:
+          ARCH: ${{ matrix.arch }}-${{ matrix.sdk }}
+          FEEDNAME: tollgate
+          PACKAGES: tollgate-wrt
+          INDEX: 1
+          V: s
+
+      - name: Stage per-arch asset
+        run: |
+          set -euo pipefail
+          PKG_VERSION=$(grep '^PKG_VERSION:=' net/tollgate-wrt/Makefile | sed 's/^PKG_VERSION:=//')
+          echo "PKG_VERSION=$PKG_VERSION"
+          # gh-action-sdk moves bin/ into the workspace (artifacts_dir).
+          PKG_DIR="bin/packages/${{ matrix.arch }}/tollgate"
+          echo "PKG_DIR=$PKG_DIR"
+          ls -la "$PKG_DIR" || true
+          PKG_FILE=$(find "$PKG_DIR" -maxdepth 1 -type f -name "tollgate-wrt*.${{ matrix.ext }}" | head -n1)
+          if [ -z "$PKG_FILE" ]; then
+            echo "::error::no tollgate-wrt .${{ matrix.ext }} produced for ${{ matrix.arch }}"
+            exit 1
+          fi
+          ASSET="tollgate-wrt_${PKG_VERSION}_${{ matrix.arch }}.${{ matrix.ext }}"
+          cp "$PKG_FILE" "$ASSET"
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+          ls -lh "$ASSET"
+
+      - name: Upload per-arch artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: tollgate-wrt-${{ matrix.arch }}-${{ matrix.ext }}
+          path: tollgate-wrt_*_${{ matrix.arch }}.${{ matrix.ext }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish release assets
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all per-arch assets
+        uses: actions/download-artifact@v7
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: List staged assets
+        run: ls -lh assets/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          fail_on_unmatched_files: true
