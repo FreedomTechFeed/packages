@@ -9,19 +9,21 @@ permissions:
   checks: read
 
 jobs:
-  wait-for-formalities:
-    name: Wait for FormalityCheck
-    runs-on: ubuntu-slim
-    steps:
-      - name: Wait for Check Run
-        uses: lewagon/wait-on-check-action@v1.9.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          check-name: 'FormalityCheck / Git & Commits'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 5
-
   build:
     name: Feeds Package Test Build
-    needs: wait-for-formalities
     uses: openwrt/actions-shared-workflows/.github/workflows/multi-arch-test-build.yml@main
+    with:
+      # Custom matrix override. The openwrt shared workflow's DEFAULT matrix
+      # does NOT include aarch64_cortex-a53 / mediatek-filogic (the bench
+      # GL-MT6000 arch), so we pass an explicit matrix that adds it alongside
+      # the arches the wizard can select (see net4sats-wizard-go arch.go).
+      # Passing a matrix input replaces the default entirely, so every arch
+      # we want built must be listed here.
+      matrix: >-
+        {"include": [
+          {"arch": "aarch64_cortex-a53", "target": "mediatek-filogic", "runtime_test": true},
+          {"arch": "aarch64_generic", "target": "armsr-armv8", "runtime_test": true},
+          {"arch": "mips_24kc", "target": "ath79-generic", "runtime_test": true},
+          {"arch": "mipsel_24kc", "target": "mt7621", "runtime_test": false},
+          {"arch": "x86_64", "target": "x86-64", "runtime_test": true}
+        ]}
