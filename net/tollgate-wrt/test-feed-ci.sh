@@ -97,8 +97,13 @@ done
 #   2. The runtime smoke test is non-blocking (continue-on-error: true) because
 #      upstream bug openwrt/actions-shared-workflows#130 makes it fail
 #      deterministically (kmods feed 404) even when the package built fine.
-# Assert the vendored workflow encodes both, so a revert to the upstream
-# reusable workflow (which reintroduces both problems) is caught.
+#   3. The runtime-test container BUILD is also non-blocking: the
+#      openwrt/rootfs:<arch>-<branch> image does not exist for every arch
+#      (aarch64_cortex-a72, arm_cortex-a7, mips64_octeonplus have no rootfs
+#      image on Docker Hub), so `docker build` fails with "not found" for those
+#      arches even though the package built fine.
+# Assert the vendored workflow encodes all three, so a revert to the upstream
+# reusable workflow (which reintroduces these problems) is caught.
 PR_WF=""
 for f in "$WORKFLOW_DIR"/*.yml; do
     if grep -q 'name: Test and Build' "$f" && grep -q 'PACKAGES="tollgate-wrt"' "$f"; then
@@ -107,6 +112,20 @@ for f in "$WORKFLOW_DIR"/*.yml; do
 done
 if [ -n "$PR_WF" ]; then
     ok "PR CI vendored and always builds tollgate-wrt in $(basename "$PR_WF")"
+    # The runtime-test container build step must be non-blocking. Scope the
+    # check to the "Build Docker container" step block (from its `- name:` line
+    # until the next `- name:` at the same indent) and require a
+    # `continue-on-error: true` inside it.
+    if awk '
+        /^[[:space:]]*- name: Build Docker container/ {inbuild=1; next}
+        inbuild && /^[[:space:]]*- name:/ {inbuild=0}
+        inbuild && /continue-on-error: true/ {found=1}
+        END {exit !found}
+    ' "$PR_WF"; then
+        ok "runtime-test container build is non-blocking (continue-on-error) in $(basename "$PR_WF")"
+    else
+        fail "runtime-test container build in $(basename "$PR_WF") is not non-blocking (missing continue-on-error: true on 'Build Docker container')"
+    fi
     if grep -q 'continue-on-error: true' "$PR_WF"; then
         ok "runtime smoke test is non-blocking (continue-on-error) in $(basename "$PR_WF")"
     else

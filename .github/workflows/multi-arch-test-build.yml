@@ -19,7 +19,11 @@ name: Test and Build
 #      newer kernel the old kmods dir is removed and `opkg update` 404s. Every
 #      runtime test fails even though the package built fine. We keep the test
 #      as a best-effort smoke check but the BUILD phase (which actually compiles
-#      tollgate-wrt) is the real gate.
+#      tollgate-wrt) is the real gate. The runtime-test container BUILD is also
+#      non-blocking: openwrt/rootfs:<arch>-<branch> does not exist for every arch
+#      (e.g. aarch64_cortex-a72, arm_cortex-a7, mips64_octeonplus have no rootfs
+#      image on Docker Hub), so `docker build` fails with "not found" for those
+#      arches even though the package built fine.
 #
 # The real build gate is release-publish.yml (tag-triggered, green) — this
 # workflow is the PR-time signal.
@@ -199,8 +203,16 @@ jobs:
             .github/scripts/test_entrypoint.sh
           sparse-checkout-cone-mode: false
 
+      # Runtime-test container build. Also NON-BLOCKING (continue-on-error: true)
+      # for the same reason as the test below: the openwrt/rootfs:<arch>-<branch>
+      # image does not exist for every arch (e.g. aarch64_cortex-a72,
+      # arm_cortex-a7, mips64_octeonplus have no rootfs image on Docker Hub), so
+      # `docker build` fails with "not found" even though the package built fine.
+      # This is upstream runtime-test infra, not a failure of our package. The
+      # BUILD phase (which actually compiles tollgate-wrt) is the real gate.
       - name: Build Docker container
         if: ${{ matrix.runtime_test && fromJSON(env.HAVE_PKGS) }}
+        continue-on-error: true
         run: |
           docker build \
             --build-arg ARCH \
