@@ -39,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: >-
-        {"include": [
+        ${{ fromJSON('{"include": [
           {"arch": "aarch64_cortex-a53", "target": "mediatek-filogic", "runtime_test": true},
           {"arch": "aarch64_cortex-a72", "target": "bcm27xx-bcm2711", "runtime_test": true},
           {"arch": "aarch64_generic", "target": "armsr-armv8", "runtime_test": true},
@@ -48,7 +48,7 @@ jobs:
           {"arch": "mipsel_24kc", "target": "mt7621", "runtime_test": false},
           {"arch": "mips64_octeonplus", "target": "octeon-generic", "runtime_test": true},
           {"arch": "x86_64", "target": "x86-64", "runtime_test": true}
-        ]}
+        ]}') }}
 
     steps:
       - name: Remove unused Android SDK, .NET, Swift, GHC
