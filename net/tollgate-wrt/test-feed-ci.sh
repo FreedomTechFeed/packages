@@ -88,6 +88,34 @@ for arch in mipsel_24kc mips_24kc x86_64; do
     [ "$FOUND" = 1 ] || fail "existing arch $arch missing from all workflows"
 done
 
+# --- Gate E: PR CI always builds tollgate-wrt and runtime test is non-blocking ---
+# The PR CI is vendored (not the upstream reusable workflow) so that:
+#   1. It ALWAYS builds tollgate-wrt. The upstream "Determine changed packages"
+#      step only builds packages whose */Makefile changed; a workflow-only PR
+#      would fall back to generic test packages and give ZERO signal about
+#      tollgate-wrt.
+#   2. The runtime smoke test is non-blocking (continue-on-error: true) because
+#      upstream bug openwrt/actions-shared-workflows#130 makes it fail
+#      deterministically (kmods feed 404) even when the package built fine.
+# Assert the vendored workflow encodes both, so a revert to the upstream
+# reusable workflow (which reintroduces both problems) is caught.
+PR_WF=""
+for f in "$WORKFLOW_DIR"/*.yml; do
+    if grep -q 'name: Test and Build' "$f" && grep -q 'PACKAGES="tollgate-wrt"' "$f"; then
+        PR_WF="$f"
+    fi
+done
+if [ -n "$PR_WF" ]; then
+    ok "PR CI vendored and always builds tollgate-wrt in $(basename "$PR_WF")"
+    if grep -q 'continue-on-error: true' "$PR_WF"; then
+        ok "runtime smoke test is non-blocking (continue-on-error) in $(basename "$PR_WF")"
+    else
+        fail "runtime smoke test in $(basename "$PR_WF") is not non-blocking (missing continue-on-error: true)"
+    fi
+else
+    fail "no vendored PR CI workflow always builds tollgate-wrt (PACKAGES=\"tollgate-wrt\")"
+fi
+
 if [ "$FAIL" = 1 ]; then
     echo "test-feed-ci: FAILED" >&2
     exit 1
