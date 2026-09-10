@@ -22,8 +22,11 @@ jobs:
       matrix: >-
         {"include": [
           {"arch": "aarch64_cortex-a53", "target": "mediatek-filogic", "runtime_test": true},
+          {"arch": "aarch64_cortex-a72", "target": "bcm27xx-bcm2711", "runtime_test": true},
           {"arch": "aarch64_generic", "target": "armsr-armv8", "runtime_test": true},
+          {"arch": "arm_cortex-a7", "target": "bcm27xx-bcm2709", "runtime_test": true},
           {"arch": "mips_24kc", "target": "ath79-generic", "runtime_test": true},
           {"arch": "mipsel_24kc", "target": "mt7621", "runtime_test": false},
+          {"arch": "mips64_octeonplus", "target": "octeon-generic", "runtime_test": true},
           {"arch": "x86_64", "target": "x86-64", "runtime_test": true}
         ]}

@@ -41,10 +41,16 @@ jobs:
         include:
           - {arch: aarch64_cortex-a53, target: mediatek-filogic, sdk: master, ext: apk}
           - {arch: aarch64_cortex-a53, target: mediatek-filogic, sdk: openwrt-24.10, ext: ipk}
+          - {arch: aarch64_cortex-a72, target: bcm27xx-bcm2711, sdk: master, ext: apk}
+          - {arch: aarch64_cortex-a72, target: bcm27xx-bcm2711, sdk: openwrt-24.10, ext: ipk}
+          - {arch: arm_cortex-a7, target: bcm27xx-bcm2709, sdk: master, ext: apk}
+          - {arch: arm_cortex-a7, target: bcm27xx-bcm2709, sdk: openwrt-24.10, ext: ipk}
           - {arch: mipsel_24kc, target: mt7621, sdk: master, ext: apk}
           - {arch: mipsel_24kc, target: mt7621, sdk: openwrt-24.10, ext: ipk}
           - {arch: mips_24kc, target: ath79-generic, sdk: master, ext: apk}
           - {arch: mips_24kc, target: ath79-generic, sdk: openwrt-24.10, ext: ipk}
+          - {arch: mips64_octeonplus, target: octeon-generic, sdk: master, ext: apk}
+          - {arch: mips64_octeonplus, target: octeon-generic, sdk: openwrt-24.10, ext: ipk}
           - {arch: x86_64, target: x86-64, sdk: master, ext: apk}
           - {arch: x86_64, target: x86-64, sdk: openwrt-24.10, ext: ipk}
 
