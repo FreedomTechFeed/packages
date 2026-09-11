@@ -88,6 +88,53 @@ for arch in mipsel_24kc mips_24kc x86_64; do
     [ "$FOUND" = 1 ] || fail "existing arch $arch missing from all workflows"
 done
 
+# --- Gate E: PR CI always builds tollgate-wrt and runtime test is non-blocking ---
+# The PR CI is vendored (not the upstream reusable workflow) so that:
+#   1. It ALWAYS builds tollgate-wrt. The upstream "Determine changed packages"
+#      step only builds packages whose */Makefile changed; a workflow-only PR
+#      would fall back to generic test packages and give ZERO signal about
+#      tollgate-wrt.
+#   2. The runtime smoke test is non-blocking (continue-on-error: true) because
+#      upstream bug openwrt/actions-shared-workflows#130 makes it fail
+#      deterministically (kmods feed 404) even when the package built fine.
+#   3. The runtime-test container BUILD is also non-blocking: the
+#      openwrt/rootfs:<arch>-<branch> image does not exist for every arch
+#      (aarch64_cortex-a72, arm_cortex-a7, mips64_octeonplus have no rootfs
+#      image on Docker Hub), so `docker build` fails with "not found" for those
+#      arches even though the package built fine.
+# Assert the vendored workflow encodes all three, so a revert to the upstream
+# reusable workflow (which reintroduces these problems) is caught.
+PR_WF=""
+for f in "$WORKFLOW_DIR"/*.yml; do
+    if grep -q 'name: Test and Build' "$f" && grep -q 'PACKAGES="tollgate-wrt"' "$f"; then
+        PR_WF="$f"
+    fi
+done
+if [ -n "$PR_WF" ]; then
+    ok "PR CI vendored and always builds tollgate-wrt in $(basename "$PR_WF")"
+    # The runtime-test container build step must be non-blocking. Scope the
+    # check to the "Build Docker container" step block (from its `- name:` line
+    # until the next `- name:` at the same indent) and require a
+    # `continue-on-error: true` inside it.
+    if awk '
+        /^[[:space:]]*- name: Build Docker container/ {inbuild=1; next}
+        inbuild && /^[[:space:]]*- name:/ {inbuild=0}
+        inbuild && /continue-on-error: true/ {found=1}
+        END {exit !found}
+    ' "$PR_WF"; then
+        ok "runtime-test container build is non-blocking (continue-on-error) in $(basename "$PR_WF")"
+    else
+        fail "runtime-test container build in $(basename "$PR_WF") is not non-blocking (missing continue-on-error: true on 'Build Docker container')"
+    fi
+    if grep -q 'continue-on-error: true' "$PR_WF"; then
+        ok "runtime smoke test is non-blocking (continue-on-error) in $(basename "$PR_WF")"
+    else
+        fail "runtime smoke test in $(basename "$PR_WF") is not non-blocking (missing continue-on-error: true)"
+    fi
+else
+    fail "no vendored PR CI workflow always builds tollgate-wrt (PACKAGES=\"tollgate-wrt\")"
+fi
+
 if [ "$FAIL" = 1 ]; then
     echo "test-feed-ci: FAILED" >&2
     exit 1
