@@ -9,13 +9,14 @@
 # The CLI exposes the version through a cobra `version` subcommand (it has no
 # --version flag), so we accept either a --version probe or the subcommand.
 # The version string is injected via the feed's LDFLAGS as
-# cli.Version="v$(PKG_VERSION)" (i.e. "v0.6.0-alpha1"), so a bare "0.6.0"
-# always appears in the reported version either way.
+# cli.Version="$(PKG_SOURCE_TAG)-g$(short SHA)" (i.e. "v0.6.0-alpha2-g089e876";
+# the feed pins a pre-tag COMMIT, see net/tollgate-wrt/Makefile), so a bare
+# "0.6.0" always appears in the reported version either way.
 #
 # Exit status: 0 = pass, 1 = fail.
 
 BINARY="/usr/bin/tollgate"
-PKG_VERSION="0.6.0-alpha1"
+PKG_VERSION="0.6.0_alpha2_pre"
 
 if [ ! -x "$BINARY" ]; then
     echo "FAIL: $BINARY not found" >&2
