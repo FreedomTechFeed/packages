@@ -260,6 +260,21 @@ define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink $(1)/etc/uci-defaults/
 	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/uci-defaults/99-tollgate-setup $(1)/etc/uci-defaults/
+	# 99-tollgate-setup ships with a literal __TOLLGATE_VERSION__ placeholder in
+	# SETUP_VERSION= and MUST be substituted at install time. Both of upstream's
+	# own packaging paths do exactly this (packaging/Makefile substitutes
+	# $(TOLLGATE_DISPLAY_VERSION), packaging/local-build-ipk.sh substitutes
+	# $PKG_VERSION), and upstream's script only falls back to guessing when the
+	# placeholder is still present — a fallback that reads /usr/lib/opkg/status,
+	# which does not exist on apk-based (OpenWrt 25.x) systems, so an
+	# unsubstituted file would make every router write SETUP_VERSION
+	# "unsubstituted" into /etc/tollgate-setup-done. The script re-runs full
+	# setup when that marker changes, so a wrong value silently breaks the
+	# version-bump re-setup path.
+	# The substituted value is the repo-root VERSION file's content
+	# (PKG_SOURCE_TAG), matching upstream's own builds so the marker is
+	# identical when the real tag build lands.
+	$(SED) 's|__TOLLGATE_VERSION__|$(PKG_SOURCE_TAG)|g' $(1)/etc/uci-defaults/99-tollgate-setup
 
 	$(INSTALL_DIR) $(1)/etc/nftables.d
 	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/etc/nftables.d/20-nds-enforce.nft $(1)/etc/nftables.d/
