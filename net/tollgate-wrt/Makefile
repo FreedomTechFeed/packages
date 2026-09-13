@@ -16,9 +16,9 @@
 # is no separate files/ tree to keep in sync.
 #
 # Versioning: PKG_VERSION (apk-legal, underscore) names the package version
-# while PKG_SOURCE_VERSION (hyphen, upstream git tag) drives the download
-# URL/tarball name and the tag-named build dirs below — see the version block
-# for why the two are split.
+# while PKG_SOURCE_VERSION (the immutable upstream COMMIT SHA) drives the
+# download URL/tarball name and the SHA-named build dirs below — see the
+# version block for why they are split.
 #
 # One package, two binaries:
 #   - tollgate-wrt : the service, the module-root main package at src/main.go
@@ -36,17 +36,43 @@ PKG_NAME:=tollgate-wrt
 # apk (CONFIG_USE_APK, v24.10+), include/package-pack.mk feeds
 # "version:$(VERSION)" = "$(PKG_VERSION)-r$(PKG_RELEASE)" to `apk mkpkg`, and
 # apk-tools 3.x REJECTS hyphens ("package version is invalid", make Error 99).
-# apk pre-release convention uses '_' (or '~'): 0.6.0_alpha1-r1 is accepted.
-PKG_VERSION:=0.6.0_alpha1
-# PKG_SOURCE_VERSION is the upstream git tag (hyphenated, immutable on GitHub).
-# It drives ONLY the download naming/URL and the tag-named build dirs below —
+# apk pre-release convention uses '_' (or '~'): 0.6.0_alpha2_pre-r1 is accepted.
+#
+# '_pre' marks this as a PRE-TAG build of the v0.6.0-alpha2 tree: it is the tip
+# of main, built before the tag was cut. apk orders it strictly BELOW the
+# eventual tag build (0.6.0_alpha2_pre < 0.6.0_alpha2 — checked with
+# `apk version -t` on apk-tools 3.0.5), so a device running this build is
+# offered the real alpha2 once it is published, and a tester can always tell
+# from the installed version which of the two they are running.
+PKG_VERSION:=0.6.0_alpha2_pre
+# PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
+# SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
+# moving branch (hash churn, unreproducible builds, every consumer gets
+# untested tip), so we pin the commit. This is the tip of main, pinned in
+# preparation for the v0.6.0-alpha2 tag, which has not been cut yet — main's
+# CHANGELOG already carries "[v0.6.0-alpha2] - 2026-09-13", so the tip IS the
+# intended alpha2 content.
+# It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=0.6.0-alpha1
+PKG_SOURCE_VERSION:=089e876cb24fd2fa8bd9d36323edb71e347e825b
+# PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
+# ONLY for the version string baked into the binaries, so a tester sees which
+# release the build came from instead of a bare SHA.
+PKG_SOURCE_TAG:=v0.6.0-alpha2
+# Short SHA for that human-facing version string; the full SHA stays in
+# GitCommit, which is what a bug report should quote.
+PKG_SOURCE_SHA7:=$(shell printf '%s' $(PKG_SOURCE_VERSION) | cut -c1-7)
 PKG_RELEASE:=1
 
 PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/v$(PKG_SOURCE_VERSION)?
-PKG_HASH:=c0ca1b37cbccde8e46de8e42287185d322c648bb10ad317b3e496a136a0e35f7
+# The trailing '?' is load-bearing: OpenWrt's scripts/download.pl appends
+# "/$(PKG_SOURCE)" to PKG_SOURCE_URL before fetching, so the '?' turns that
+# suffix into a query string codeload ignores and leaves the COMMIT SHA as the
+# ref. Without it the request would be .../tar.gz/<sha>/<filename> and 404.
+# Verified: the exact URL download.pl constructs (with the '?' and the
+# PKG_SOURCE suffix) returns this tarball, sha256 == PKG_HASH below.
+PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
+PKG_HASH:=ec27e23cc3f6676bd586b81f12d3be049207206358cadb6ce53d259873111d57
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
@@ -55,15 +81,18 @@ PKG_LICENSE_FILES:=LICENSE
 # PKG_BUILD_DIR points at the tarball's src/ directory: that is where the main
 # module's go.mod lives, so golang-package.mk operates on the module root and
 # the `replace ./xxx` directives resolve to sibling directories in the tree.
-# It stays tag-named (PKG_SOURCE_VERSION, hyphen) because the tarball extracts
-# to tollgate-module-basic-go-0.6.0-alpha1/ — it must NOT follow PKG_VERSION.
+# It stays SHA-named (PKG_SOURCE_VERSION) because a codeload tarball of a
+# COMMIT extracts to tollgate-module-basic-go-<full-sha>/ — it must NOT follow
+# PKG_VERSION. (A tag-based pin extracted to <repo>-<tag>/ instead; switching
+# the pin to a SHA moved this directory name with it, which is why it is
+# derived from PKG_SOURCE_VERSION rather than written out.)
 PKG_BUILD_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_SOURCE_VERSION)/src
 
 # PKG_TARBALL_DIR is the tarball extraction root (parent of PKG_BUILD_DIR).
 # Build/Prepare extracts the WHOLE upstream tarball there, so packaging/files/
 # — the OpenWrt-shaped runtime files — survives as a sibling of src/ and can
 # be referenced by the install recipe below. Nothing is vendored into this
-# feed; the files ride along with the upstream release tarball. Tag-named for
+# feed; the files ride along with the upstream release tarball. SHA-named for
 # the same reason as PKG_BUILD_DIR (see above).
 PKG_TARBALL_DIR:=$(BUILD_DIR)/tollgate-module-basic-go-$(PKG_SOURCE_VERSION)
 
@@ -77,11 +106,14 @@ GO_PKG:=github.com/OpenTollGate/tollgate-module-basic-go
 GO_PKG_BUILD_PKG:=$(GO_PKG)
 
 # Version injection. src/cli is its own sub-module, so the import path keeps
-# the /src segment (matches how upstream's CI injects these values). Tied to
-# PKG_SOURCE_VERSION so the baked-in Version/GitCommit match the upstream tag
-# (v0.6.0-alpha1 / 0.6.0-alpha1) rather than the apk-legal package version.
+# the /src segment (matches how upstream's CI injects these values). Version is
+# built from PKG_SOURCE_TAG (the release this commit belongs to) plus the short
+# COMMIT SHA, so a tester running `tollgate version` sees both the release and
+# the exact commit — the SHA alone does not identify the release, and the
+# apk-legal PKG_VERSION ("0.6.0_alpha2_pre") is not what upstream would tag.
+# GitCommit carries the full SHA.
 GO_PKG_LDFLAGS_X:= \
-	$(GO_PKG)/src/cli.Version=v$(PKG_SOURCE_VERSION) \
+	$(GO_PKG)/src/cli.Version=$(PKG_SOURCE_TAG)-g$(PKG_SOURCE_SHA7) \
 	$(GO_PKG)/src/cli.GitCommit=$(PKG_SOURCE_VERSION) \
 	$(GO_PKG)/src/cli.BuildTime=$(SOURCE_DATE_EPOCH)
 
