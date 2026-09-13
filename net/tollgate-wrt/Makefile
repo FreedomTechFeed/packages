@@ -36,17 +36,28 @@ PKG_NAME:=tollgate-wrt
 # apk (CONFIG_USE_APK, v24.10+), include/package-pack.mk feeds
 # "version:$(VERSION)" = "$(PKG_VERSION)-r$(PKG_RELEASE)" to `apk mkpkg`, and
 # apk-tools 3.x REJECTS hyphens ("package version is invalid", make Error 99).
-# apk pre-release convention uses '_' (or '~'): 0.6.0_alpha1-r1 is accepted.
-PKG_VERSION:=0.6.0_alpha1
-# PKG_SOURCE_VERSION is the upstream git tag (hyphenated, immutable on GitHub).
-# It drives ONLY the download naming/URL and the tag-named build dirs below —
-# never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=0.6.0-alpha1
+# apk pre-release convention uses '_' (or '~'): 0.6.0_alpha2-r1 is accepted.
+PKG_VERSION:=0.6.0_alpha2
+# PKG_UPSTREAM_VERSION is the human-readable upstream release version this tree
+# is built from. Upstream single-sources it in the repository-root VERSION file
+# (`v0.6.0-alpha2` at tip of main). It is stated separately here because the
+# tarball below is fetched by COMMIT, not by tag, so nothing in the URL/naming
+# carries the version string.
+PKG_UPSTREAM_VERSION:=0.6.0-alpha2
+# PKG_SOURCE_VERSION identifies the upstream tree. Historically an immutable
+# GitHub tag; for a tip-of-main pin it is the 40-hex commit SHA (codeload
+# accepts a SHA in the same /tar.gz/<ref> path).
+PKG_SOURCE_VERSION:=089e876cb24fd2fa8bd9d36323edb71e347e825b
 PKG_RELEASE:=1
 
 PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/v$(PKG_SOURCE_VERSION)?
-PKG_HASH:=c0ca1b37cbccde8e46de8e42287185d322c648bb10ad317b3e496a136a0e35f7
+# The trailing '?' is load-bearing: OpenWrt's download.pl requests
+# $(PKG_SOURCE_URL)/$(PKG_SOURCE), i.e. the file name is appended to this URL.
+# codeload takes the ref from the path and ignores the query string, so the
+# '?' makes the appended file name harmless. Dropping it produces
+# /tar.gz/<ref>/<file>.tar.gz -> HTTP 404 (observed on run 34763641288).
+PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
+PKG_HASH:=ec27e23cc3f6676bd586b81f12d3be049207206358cadb6ce53d259873111d57
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
@@ -77,11 +88,12 @@ GO_PKG:=github.com/OpenTollGate/tollgate-module-basic-go
 GO_PKG_BUILD_PKG:=$(GO_PKG)
 
 # Version injection. src/cli is its own sub-module, so the import path keeps
-# the /src segment (matches how upstream's CI injects these values). Tied to
-# PKG_SOURCE_VERSION so the baked-in Version/GitCommit match the upstream tag
-# (v0.6.0-alpha1 / 0.6.0-alpha1) rather than the apk-legal package version.
+# the /src segment (matches how upstream's CI injects these values). Version
+# comes from PKG_UPSTREAM_VERSION (upstream's VERSION file) while GitCommit
+# carries the immutable tree identity (PKG_SOURCE_VERSION) — at tip-of-main
+# that is a 40-hex SHA, which must never be used as the display version.
 GO_PKG_LDFLAGS_X:= \
-	$(GO_PKG)/src/cli.Version=v$(PKG_SOURCE_VERSION) \
+	$(GO_PKG)/src/cli.Version=v$(PKG_UPSTREAM_VERSION) \
 	$(GO_PKG)/src/cli.GitCommit=$(PKG_SOURCE_VERSION) \
 	$(GO_PKG)/src/cli.BuildTime=$(SOURCE_DATE_EPOCH)
 
@@ -228,6 +240,13 @@ define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink $(1)/etc/uci-defaults/
 	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/uci-defaults/99-tollgate-setup $(1)/etc/uci-defaults/
+	# Upstream tip ships 99-tollgate-setup carrying a __TOLLGATE_VERSION__
+	# placeholder which upstream's own packaging/Makefile substitutes at install
+	# time; the script writes that value into its setup-flag file and re-runs the
+	# full setup when it changes. The feed installs the file verbatim, so it must
+	# substitute here too, or the router stores the literal placeholder (the
+	# script's "unsubstituted" fallback) and the version-bump path never fires.
+	$(SED) 's|__TOLLGATE_VERSION__|v$(PKG_UPSTREAM_VERSION)|g' $(1)/etc/uci-defaults/99-tollgate-setup
 
 	$(INSTALL_DIR) $(1)/etc/nftables.d
 	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/etc/nftables.d/20-nds-enforce.nft $(1)/etc/nftables.d/
