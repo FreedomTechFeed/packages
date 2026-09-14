@@ -36,25 +36,38 @@ PKG_NAME:=tollgate-wrt
 # apk (CONFIG_USE_APK, v24.10+), include/package-pack.mk feeds
 # "version:$(VERSION)" = "$(PKG_VERSION)-r$(PKG_RELEASE)" to `apk mkpkg`, and
 # apk-tools 3.x REJECTS hyphens ("package version is invalid", make Error 99).
-# apk pre-release convention uses '_' (or '~'): 0.6.0_alpha2_pre-r1 is accepted.
+# apk pre-release convention uses '_' (or '~'): 0.6.0_alpha2_pre2-r1 is accepted.
 #
-# '_pre' marks this as a PRE-TAG build of the v0.6.0-alpha2 tree: it is the tip
-# of main, built before the tag was cut. apk orders it strictly BELOW the
-# eventual tag build (0.6.0_alpha2_pre < 0.6.0_alpha2 — checked with
-# `apk version -t` on apk-tools 3.0.5), so a device running this build is
-# offered the real alpha2 once it is published, and a tester can always tell
-# from the installed version which of the two they are running.
-PKG_VERSION:=0.6.0_alpha2_pre
+# '_pre' + counter marks this as a PRE-TAG build of the v0.6.0-alpha2 tree: it
+# is the tip of main, built before the tag was cut. The counter distinguishes
+# successive main-tip builds of the SAME pre-tag tree: the previous pin
+# (089e876) shipped '_pre', this repin of a newer main tip (7cd1882) ships
+# '_pre2'. apk orders it strictly ABOVE the build it replaces and strictly
+# BELOW the eventual tag build —
+#     0.6.0_alpha2_pre < 0.6.0_alpha2_pre2 < 0.6.0_alpha2
+# — checked with `apk version -t` (ordering) and `apk version -c` (legality)
+# on apk-tools 3.0.5, so a device already running '_pre' is OFFERED this build,
+# and is then offered the real alpha2 once it is published. A tester can always
+# tell from the installed version which of the three they are running.
+# The counter MUST stay glued to the letters: '_pre.2' and '_pre_2' are both
+# rejected by apk-tools 3 ("package version is invalid", `apk version -c`
+# exit 1). The tag mirror stays derivable by the installer's rule (drop the
+# leading 'v', turn '-' into '_'): v0.6.0-alpha2-pre2 -> 0.6.0_alpha2_pre2.
+PKG_VERSION:=0.6.0_alpha2_pre2
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
 # untested tip), so we pin the commit. This is the tip of main, pinned in
-# preparation for the v0.6.0-alpha2 tag, which has not been cut yet — main's
-# CHANGELOG already carries "[v0.6.0-alpha2] - 2026-09-13", so the tip IS the
-# intended alpha2 content.
+# preparation for the v0.6.0-alpha2 tag, which still has not been cut (upstream
+# has only v0.6.0-alpha1) — main's CHANGELOG already carries
+# "[v0.6.0-alpha2] - 2026-09-13", so the tip IS the intended alpha2 content.
+# This repin moves the tip forward from 089e876 to 7cd1882 (7 upstream commits,
+# see `git log 089e876..7cd1882`); the runtime files under packaging/files/ are
+# byte-identical between the two, only src/ changed, so the install recipe
+# below is unaffected.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=089e876cb24fd2fa8bd9d36323edb71e347e825b
+PKG_SOURCE_VERSION:=7cd1882fc197226fd95dc11e2084ecff548f88d0
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -71,8 +84,12 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # ref. Without it the request would be .../tar.gz/<sha>/<filename> and 404.
 # Verified: the exact URL download.pl constructs (with the '?' and the
 # PKG_SOURCE suffix) returns this tarball, sha256 == PKG_HASH below.
+# Re-calibrated for the 7cd1882 repin: replaying the identical construction for
+# the OUTGOING pin (089e876) reproduced the previously committed
+# ec27e23cc3f6676bd586b81f12d3be049207206358cadb6ce53d259873111d57 exactly,
+# which is what makes the method — and therefore the new hash below — trustworthy.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=ec27e23cc3f6676bd586b81f12d3be049207206358cadb6ce53d259873111d57
+PKG_HASH:=dce549b59f2c63acfaeef95e9795caa20dfe4bd08feee70440914bdf7194e8dc
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
@@ -110,7 +127,7 @@ GO_PKG_BUILD_PKG:=$(GO_PKG)
 # built from PKG_SOURCE_TAG (the release this commit belongs to) plus the short
 # COMMIT SHA, so a tester running `tollgate version` sees both the release and
 # the exact commit — the SHA alone does not identify the release, and the
-# apk-legal PKG_VERSION ("0.6.0_alpha2_pre") is not what upstream would tag.
+# apk-legal PKG_VERSION ("0.6.0_alpha2_pre2") is not what upstream would tag.
 # GitCommit carries the full SHA.
 GO_PKG_LDFLAGS_X:= \
 	$(GO_PKG)/src/cli.Version=$(PKG_SOURCE_TAG)-g$(PKG_SOURCE_SHA7) \
