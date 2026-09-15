@@ -53,7 +53,7 @@ PKG_NAME:=tollgate-wrt
 # rejected by apk-tools 3 ("package version is invalid", `apk version -c`
 # exit 1). The tag mirror stays derivable by the installer's rule (drop the
 # leading 'v', turn '-' into '_'): v0.6.0-alpha2-pre2 -> 0.6.0_alpha2_pre2.
-PKG_VERSION:=0.6.0_alpha2_pre2
+PKG_VERSION:=0.6.0_alpha2_pre3
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -67,7 +67,7 @@ PKG_VERSION:=0.6.0_alpha2_pre2
 # below is unaffected.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=7cd1882fc197226fd95dc11e2084ecff548f88d0
+PKG_SOURCE_VERSION:=373770ad1ef99b739b3c2b702943da08ed7a194f
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -89,7 +89,7 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # ec27e23cc3f6676bd586b81f12d3be049207206358cadb6ce53d259873111d57 exactly,
 # which is what makes the method — and therefore the new hash below — trustworthy.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=dce549b59f2c63acfaeef95e9795caa20dfe4bd08feee70440914bdf7194e8dc
+PKG_HASH:=fe1f118beea4113ae8addf85510a419a6da3327f4eba7447a2de114e1a207ac6
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
