@@ -65,7 +65,13 @@ PKG_NAME:=tollgate-wrt
 # rejected by apk-tools 3 ("package version is invalid", `apk version -c`
 # exit 1). The tag mirror stays derivable by the installer's rule (drop the
 # leading 'v', turn '-' into '_'): v0.6.0-alpha2-pre2 -> 0.6.0_alpha2_pre2.
-PKG_VERSION:=0.6.0_alpha2_pre3
+#
+# pre4 exists to publish a package whose captive portal actually works: the
+# release-publish workflow names assets by PKG_VERSION, so the portal-asset fix
+# must ride a NEW version (a PKG_RELEASE-only bump would emit assets named
+# 0.6.0_alpha2_pre3_*, colliding with the already-published pre3 assets). Source
+# pin is unchanged (373770a is still module main's tip).
+PKG_VERSION:=0.6.0_alpha2_pre4
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -87,11 +93,12 @@ PKG_SOURCE_TAG:=v0.6.0-alpha2
 # Short SHA for that human-facing version string; the full SHA stays in
 # GitCommit, which is what a bug report should quote.
 PKG_SOURCE_SHA7:=$(shell printf '%s' $(PKG_SOURCE_VERSION) | cut -c1-7)
-# PKG_RELEASE 2: vendor the built captive-portal assets into the feed (see the
-# files/ note above the install recipe). Without them the package shipped
-# splash.html referencing /assets/*.js|css that were never built, so the portal
+# PKG_RELEASE resets to 1 on a PKG_VERSION bump. The captive-portal assets are
+# vendored (see the files/ note above the install recipe): upstream gitignores
+# them and only builds them in CI, so without vendoring the package shipped
+# splash.html referencing /assets/*.js|css that were never built and the portal
 # died with "disallowed MIME type (text/html)" / NS_ERROR_CORRUPTED_CONTENT.
-PKG_RELEASE:=2
+PKG_RELEASE:=1
 
 PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # The trailing '?' is load-bearing: OpenWrt's scripts/download.pl appends
