@@ -2,18 +2,30 @@
 #
 # tollgate-wrt — Cashu-powered WiFi payment gateway for OpenWrt.
 #
+# Directory holding this recipe, captured BEFORE any include so
+# $(MAKEFILE_LIST)'s last word is still this file (rules.mk/package.mk append
+# many paths, e.g. the toolchain dir). Used to install the vendored
+# captive-portal assets — see the install recipe and files/ note below.
+PKG_MAKEFILE_DIR:=$(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+#
 # This feed package downloads the upstream source tarball and builds it with
 # golang-package.mk. The upstream repo (tollgate-module-basic-go) is NOT
 # modified — its Go source lives under src/ and uses a multi-module layout
 # (the main module at src/ plus sibling sub-modules wired via `replace`).
 #
 # The runtime files (init.d, uci-defaults, nftables.d, hotplug.d, man pages,
-# captive-portal site, usr/bin helpers, keep.d) are NOT vendored into this
-# feed. They are installed directly from the SOURCE TARBALL's packaging/files/
-# directory (see $(PKG_TARBALL_DIR) below), which ships OpenWrt-shaped files
-# because upstream releases its own .ipk from the same tree. Bumping
-# PKG_SOURCE_VERSION pulls in the matching runtime files automatically — there
-# is no separate files/ tree to keep in sync.
+# usr/bin helpers, keep.d) are NOT vendored into this feed. They are installed
+# directly from the SOURCE TARBALL's packaging/files/ directory (see
+# $(PKG_TARBALL_DIR) below), which ships OpenWrt-shaped files because upstream
+# releases its own .ipk from the same tree. Bumping PKG_SOURCE_VERSION pulls in
+# the matching runtime files automatically.
+#
+# ONE EXCEPTION — the captive portal site IS vendored, under
+# files/tollgate-captive-portal-site/. Its built assets/ dir is gitignored
+# upstream and only produced by packaging/portal-build.sh (Node/npm), which the
+# OpenWrt SDK build cannot run; without vendoring, the package ships splash.html
+# with dangling /assets/*.js|css references and the portal never boots. See the
+# note above the install recipe for the full rationale.
 #
 # Versioning: PKG_VERSION (apk-legal, underscore) names the package version
 # while PKG_SOURCE_VERSION (the immutable upstream COMMIT SHA) drives the
@@ -53,7 +65,13 @@ PKG_NAME:=tollgate-wrt
 # rejected by apk-tools 3 ("package version is invalid", `apk version -c`
 # exit 1). The tag mirror stays derivable by the installer's rule (drop the
 # leading 'v', turn '-' into '_'): v0.6.0-alpha2-pre2 -> 0.6.0_alpha2_pre2.
-PKG_VERSION:=0.6.0_alpha2_pre3
+#
+# pre4 exists to publish a package whose captive portal actually works: the
+# release-publish workflow names assets by PKG_VERSION, so the portal-asset fix
+# must ride a NEW version (a PKG_RELEASE-only bump would emit assets named
+# 0.6.0_alpha2_pre3_*, colliding with the already-published pre3 assets). Source
+# pin is unchanged (373770a is still module main's tip).
+PKG_VERSION:=0.6.0_alpha2_pre4
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -75,6 +93,11 @@ PKG_SOURCE_TAG:=v0.6.0-alpha2
 # Short SHA for that human-facing version string; the full SHA stays in
 # GitCommit, which is what a bug report should quote.
 PKG_SOURCE_SHA7:=$(shell printf '%s' $(PKG_SOURCE_VERSION) | cut -c1-7)
+# PKG_RELEASE resets to 1 on a PKG_VERSION bump. The captive-portal assets are
+# vendored (see the files/ note above the install recipe): upstream gitignores
+# them and only builds them in CI, so without vendoring the package shipped
+# splash.html referencing /assets/*.js|css that were never built and the portal
+# died with "disallowed MIME type (text/html)" / NS_ERROR_CORRUPTED_CONTENT.
 PKG_RELEASE:=1
 
 PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
@@ -263,9 +286,22 @@ exit 0
 endef
 
 # Runtime files are installed from the upstream source tarball's
-# packaging/files/ directory (see PKG_TARBALL_DIR above), NOT from a vendored
-# copy checked into this feed. The binaries install lines use
-# $(GO_PKG_BUILD_BIN_DIR) and stay unchanged.
+# packaging/files/ directory (see PKG_TARBALL_DIR above); the binaries install
+# lines use $(GO_PKG_BUILD_BIN_DIR) and stay unchanged.
+#
+# EXCEPTION — the captive portal site is VENDORED from this feed's files/
+# directory. The upstream repo gitignores packaging/files/tollgate-captive-
+# portal-site/assets/ (commit "build portal assets from source, stop
+# committing minified JS") and only produces it at package time via
+# packaging/portal-build.sh (Node/npm + the tollgate-captive-portal-site
+# repo). The OpenWrt SDK build this feed uses has no npm step, so the tarball
+# ships splash.html with hashed /assets/*.js|css references but none of the
+# bundles — the portal SPA then fails with "disallowed MIME type (text/html)"
+# (uhttpd answers the missing files with its HTML 404 page) and never boots.
+# The prebuilt, self-consistent bundle (HTML + assets from the same portal
+# commit, plus the module-only welcome.html) is committed under
+# files/tollgate-captive-portal-site/ and installed here instead of the
+# tarball copy.
 define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/tollgate-module-basic-go $(1)/usr/bin/tollgate-wrt
@@ -314,7 +350,7 @@ define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/etc/tollgate/ecash
 
 	$(INSTALL_DIR) $(1)/etc/tollgate/tollgate-captive-portal-site
-	$(CP) $(PKG_TARBALL_DIR)/packaging/files/tollgate-captive-portal-site/. $(1)/etc/tollgate/tollgate-captive-portal-site/
+	$(CP) $(PKG_MAKEFILE_DIR)files/tollgate-captive-portal-site/. $(1)/etc/tollgate/tollgate-captive-portal-site/
 
 	$(INSTALL_DIR) $(1)/etc/crontabs
 
