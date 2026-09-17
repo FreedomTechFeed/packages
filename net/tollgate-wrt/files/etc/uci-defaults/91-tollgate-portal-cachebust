@@ -1,0 +1,34 @@
+#!/bin/sh
+# Feed-owned captive-portal cache-bust.
+#
+# TEMPORARY: the module's own 90-tollgate-captive-portal-symlink carries the
+# same fix upstream; drop this file and its install/postinst references when
+# the feed repins that module commit.
+#
+# WHY: uhttpd serves the portal with Last-Modified: 1970-01-01 (reproducible-
+# build mtimes) and NO Cache-Control. Browsers therefore cache splash.html
+# heuristically for ~years and keep the OLD portal after an upgrade (uhttpd has
+# no header/no-cache option, and the portal ships no service worker, so the
+# entry URL must change per release). Cache-bust the SPA entry URL in the
+# nodogsplash stub that 90-... generates, and give the portal files a sane
+# mtime for direct :2051 loads.
+#
+# Ordering: the .ipk postinst invokes 90-... then this then 99-...; at boot,
+# uci-defaults run in lexical order, so 91 also follows 90.
+
+STUB=/etc/nodogsplash/htdocs/splash.html
+PORTAL_DIR=/etc/tollgate/tollgate-captive-portal-site
+
+if [ -f "$STUB" ] && ! grep -q '_cb=' "$STUB"; then
+	# 1) JS redirect: append ?_cb=<timestamp>, preserving the ?redir= param.
+	#    Module stub line (373770a):
+	#      location.replace('http://' + location.hostname + ':2051/splash.html' + location.search);
+	sed -i "s#:2051/splash.html' + location.search#:2051/splash.html?_cb=' + Date.now() + location.search.replace('?','\\&')#" "$STUB" 2>/dev/null || true
+	# 2) <noscript> fallback link: static cache-buster (no JS available there).
+	sed -i 's#:2051/splash.html"#:2051/splash.html?_cb=1"#' "$STUB" 2>/dev/null || true
+fi
+
+# Sane Last-Modified so bookmarked direct :2051/splash.html loads revalidate.
+[ -d "$PORTAL_DIR" ] && find "$PORTAL_DIR" -type f -exec touch {} + 2>/dev/null
+
+exit 0
