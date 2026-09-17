@@ -66,27 +66,23 @@ PKG_NAME:=tollgate-wrt
 # exit 1). The tag mirror stays derivable by the installer's rule (drop the
 # leading 'v', turn '-' into '_'): v0.6.0-alpha2-pre2 -> 0.6.0_alpha2_pre2.
 #
-# pre4 exists to publish a package whose captive portal actually works: the
-# release-publish workflow names assets by PKG_VERSION, so each fix must ride a
-# NEW version (a PKG_RELEASE-only bump would reuse the previous asset names).
-# pre5 ships: the portal entry cache-bust (browsers cached the 1970-mtime HTML
-# for years) and the CLI's main.version injection so `tollgate --version`
-# reports the pinned release instead of "dev".
-PKG_VERSION:=0.6.0_alpha2_pre5
+# pre4 published a package whose captive portal actually works (vendored
+# assets); pre5 added the portal ENTRY cache-bust and the CLI main.version
+# injection. pre6 repins to the module commit that carries the cache-bust
+# UPSTREAM, so the feed-side 91-tollgate-portal-cachebust workaround is removed
+# (one mechanism, not two). The release-publish workflow names assets by
+# PKG_VERSION, so each change rides a NEW version.
+PKG_VERSION:=0.6.0_alpha2_pre6
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
-# untested tip), so we pin the commit. This is the tip of main, pinned in
-# preparation for the v0.6.0-alpha2 tag, which still has not been cut (upstream
-# has only v0.6.0-alpha1) — main's CHANGELOG already carries
-# "[v0.6.0-alpha2] - 2026-09-13", so the tip IS the intended alpha2 content.
-# This repin moves the tip forward from 089e876 to 7cd1882 (7 upstream commits,
-# see `git log 089e876..7cd1882`); the runtime files under packaging/files/ are
-# byte-identical between the two, only src/ changed, so the install recipe
-# below is unaffected.
+# untested tip), so we pin the commit. This is the tip of main; main's CHANGELOG
+# carries "[v0.6.0-alpha2]". pre6 advances the pin from 373770a to d0cb92f2
+# (module #404: the 90-tollgate-captive-portal-symlink cache-bust) so the feed
+# no longer needs its own 91-... workaround.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=373770ad1ef99b739b3c2b702943da08ed7a194f
+PKG_SOURCE_VERSION:=d0cb92f21261ff57d39bcb28e86ce2bb15fdc4ad
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -113,7 +109,7 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # ec27e23cc3f6676bd586b81f12d3be049207206358cadb6ce53d259873111d57 exactly,
 # which is what makes the method — and therefore the new hash below — trustworthy.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=fe1f118beea4113ae8addf85510a419a6da3327f4eba7447a2de114e1a207ac6
+PKG_HASH:=3ca1245317dfbeb52a5bfae9dff38ad5eaff8f5adb23785a7c86f567408c19dc
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
@@ -275,7 +271,6 @@ define Package/tollgate-wrt/postinst
 # Run the oneshot UCI defaults immediately so an install on a running router
 # takes effect without waiting for the next boot, then enable the service.
 for script in /etc/uci-defaults/90-tollgate-captive-portal-symlink \
-              /etc/uci-defaults/91-tollgate-portal-cachebust \
               /etc/uci-defaults/99-tollgate-setup; do
 	if [ -x "$$script" ]; then
 		"$$script" || echo "Warning: $$script exited with code $$?" >&2
@@ -317,8 +312,6 @@ define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink $(1)/etc/uci-defaults/
 	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/uci-defaults/99-tollgate-setup $(1)/etc/uci-defaults/
-	# Feed-owned portal cache-bust (temporary until the module carries it).
-	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/etc/uci-defaults/91-tollgate-portal-cachebust $(1)/etc/uci-defaults/
 	# 99-tollgate-setup ships with a literal __TOLLGATE_VERSION__ placeholder in
 	# SETUP_VERSION= and MUST be substituted at install time. Both of upstream's
 	# own packaging paths do exactly this (packaging/Makefile substitutes
