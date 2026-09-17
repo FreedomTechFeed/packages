@@ -67,11 +67,12 @@ PKG_NAME:=tollgate-wrt
 # leading 'v', turn '-' into '_'): v0.6.0-alpha2-pre2 -> 0.6.0_alpha2_pre2.
 #
 # pre4 exists to publish a package whose captive portal actually works: the
-# release-publish workflow names assets by PKG_VERSION, so the portal-asset fix
-# must ride a NEW version (a PKG_RELEASE-only bump would emit assets named
-# 0.6.0_alpha2_pre3_*, colliding with the already-published pre3 assets). Source
-# pin is unchanged (373770a is still module main's tip).
-PKG_VERSION:=0.6.0_alpha2_pre4
+# release-publish workflow names assets by PKG_VERSION, so each fix must ride a
+# NEW version (a PKG_RELEASE-only bump would reuse the previous asset names).
+# pre5 ships: the portal entry cache-bust (browsers cached the 1970-mtime HTML
+# for years) and the CLI's main.version injection so `tollgate --version`
+# reports the pinned release instead of "dev".
+PKG_VERSION:=0.6.0_alpha2_pre5
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -226,13 +227,15 @@ endef
 # environment set up by GoPackage/Build/Compile does NOT carry over to the
 # second recipe line. We must re-establish it via $(GO_PKG_VARS), which adds
 # `go` to PATH and exports GOOS/GOARCH/GOARM/GOMIPS/CGO_ENABLED/CC/GOCACHE/
-# GOMODCACHE — exactly what the framework uses. The -X ldflags are harmless
-# no-ops for the CLI module (it does not contain those symbols).
+# GOMODCACHE — exactly what the framework uses. The src/cli -X symbols are
+# harmless no-ops for the CLI module (it does not contain them); the CLI's OWN
+# version is the main-package `main.version`, so it is injected explicitly
+# below (without it, `tollgate --version` reports the "dev" sentinel).
 define Build/Compile
 	$(call GoPackage/Build/Compile)
 	cd $(PKG_BUILD_DIR)/cmd/tollgate-cli && \
 		$(GO_PKG_VARS) go build -trimpath \
-			-ldflags "$(GO_PKG_LDFLAGS_X:%=-X %)" \
+			-ldflags "$(GO_PKG_LDFLAGS_X:%=-X %) -X main.version=$(PKG_SOURCE_TAG)-g$(PKG_SOURCE_SHA7)" \
 			-o $(GO_PKG_BUILD_BIN_DIR)/tollgate-cli .
 endef
 
@@ -272,6 +275,7 @@ define Package/tollgate-wrt/postinst
 # Run the oneshot UCI defaults immediately so an install on a running router
 # takes effect without waiting for the next boot, then enable the service.
 for script in /etc/uci-defaults/90-tollgate-captive-portal-symlink \
+              /etc/uci-defaults/91-tollgate-portal-cachebust \
               /etc/uci-defaults/99-tollgate-setup; do
 	if [ -x "$$script" ]; then
 		"$$script" || echo "Warning: $$script exited with code $$?" >&2
@@ -313,6 +317,8 @@ define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink $(1)/etc/uci-defaults/
 	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/uci-defaults/99-tollgate-setup $(1)/etc/uci-defaults/
+	# Feed-owned portal cache-bust (temporary until the module carries it).
+	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/etc/uci-defaults/91-tollgate-portal-cachebust $(1)/etc/uci-defaults/
 	# 99-tollgate-setup ships with a literal __TOLLGATE_VERSION__ placeholder in
 	# SETUP_VERSION= and MUST be substituted at install time. Both of upstream's
 	# own packaging paths do exactly this (packaging/Makefile substitutes
