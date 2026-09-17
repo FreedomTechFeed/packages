@@ -72,7 +72,7 @@ PKG_NAME:=tollgate-wrt
 # UPSTREAM, so the feed-side 91-tollgate-portal-cachebust workaround is removed
 # (one mechanism, not two). The release-publish workflow names assets by
 # PKG_VERSION, so each change rides a NEW version.
-PKG_VERSION:=0.6.0_alpha2_pre6
+PKG_VERSION:=0.6.0_alpha2_pre7
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -271,7 +271,8 @@ define Package/tollgate-wrt/postinst
 # Run the oneshot UCI defaults immediately so an install on a running router
 # takes effect without waiting for the next boot, then enable the service.
 for script in /etc/uci-defaults/90-tollgate-captive-portal-symlink \
-              /etc/uci-defaults/99-tollgate-setup; do
+              /etc/uci-defaults/99-tollgate-setup \
+              /etc/uci-defaults/92-tollgate-admin-setup; do
 	if [ -x "$$script" ]; then
 		"$$script" || echo "Warning: $$script exited with code $$?" >&2
 	fi
@@ -350,6 +351,20 @@ define Package/tollgate-wrt/install
 
 	$(INSTALL_DIR) $(1)/etc/tollgate/tollgate-captive-portal-site
 	$(CP) $(PKG_MAKEFILE_DIR)files/tollgate-captive-portal-site/. $(1)/etc/tollgate/tollgate-captive-portal-site/
+
+	# Admin board (Preact SPA) served by the dedicated uhttpd instance on
+	# :8090. It lives under /www/tollgate (base /tollgate/) and talks to the
+	# tollgate ubus object provided by the rpcd plugin below.
+	$(INSTALL_DIR) $(1)/www/tollgate
+	$(CP) $(PKG_MAKEFILE_DIR)files/tollgate-admin/. $(1)/www/tollgate/
+
+	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
+	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/rpcd/tollgate $(1)/usr/libexec/rpcd/tollgate
+
+	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
+	$(INSTALL_CONF) $(PKG_MAKEFILE_DIR)files/rpcd/tollgate_acl.json $(1)/usr/share/rpcd/acl.d/tollgate.json
+
+	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/uci-defaults/92-tollgate-admin-setup $(1)/etc/uci-defaults/
 
 	$(INSTALL_DIR) $(1)/etc/crontabs
 
