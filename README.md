@@ -24,3 +24,4 @@ See [LICENSE](LICENSE) file.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) file.
 
+scratch: review-request removal mechanics test 2026-09-17T17:10Z — safe to delete
