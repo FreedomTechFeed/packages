@@ -72,7 +72,7 @@ PKG_NAME:=tollgate-wrt
 # UPSTREAM, so the feed-side 91-tollgate-portal-cachebust workaround is removed
 # (one mechanism, not two). The release-publish workflow names assets by
 # PKG_VERSION, so each change rides a NEW version.
-PKG_VERSION:=0.6.0_alpha2_pre7
+PKG_VERSION:=0.6.0_alpha2_pre8
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -82,7 +82,7 @@ PKG_VERSION:=0.6.0_alpha2_pre7
 # no longer needs its own 91-... workaround.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=d0cb92f21261ff57d39bcb28e86ce2bb15fdc4ad
+PKG_SOURCE_VERSION:=a6e01bd96768520f684f98d0f9d8a0d1d48c05f1
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -109,7 +109,7 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # ec27e23cc3f6676bd586b81f12d3be049207206358cadb6ce53d259873111d57 exactly,
 # which is what makes the method — and therefore the new hash below — trustworthy.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=3ca1245317dfbeb52a5bfae9dff38ad5eaff8f5adb23785a7c86f567408c19dc
+PKG_HASH:=cec0358ca4ad7bd45c977beeaaa32599f5f6a4950b35ecc309986802ea41d038
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
