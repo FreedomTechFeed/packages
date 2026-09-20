@@ -280,6 +280,9 @@ done
 
 if [ -x /etc/init.d/tollgate-wrt ]; then
 	/etc/init.d/tollgate-wrt enable 2>/dev/null || true
+	# Restart so an in-place apk/opkg upgrade runs the new binary immediately;
+	# otherwise the running daemon keeps the old process until the next reboot.
+	/etc/init.d/tollgate-wrt restart 2>/dev/null || true
 fi
 
 exit 0
