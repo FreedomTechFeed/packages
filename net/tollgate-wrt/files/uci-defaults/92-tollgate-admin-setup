@@ -20,29 +20,42 @@ for candidate in /www/tollgate /www/net4sats; do
 done
 [ -n "$ADMIN_HOME" ] || ADMIN_HOME=/www/tollgate
 
-if ! uci -q get uhttpd.admin >/dev/null 2>&1; then
-    echo "Creating uhttpd admin instance on :8090 (home ${ADMIN_HOME})"
-    uci set uhttpd.admin=uhttpd
-    uci -q delete uhttpd.admin.listen_http
-    uci add_list uhttpd.admin.listen_http='0.0.0.0:8090'
-    uci add_list uhttpd.admin.listen_http='[::]:8090'
-    uci set uhttpd.admin.ubus_prefix='/ubus'
-    uci set uhttpd.admin.script_timeout='60'
-    uci set uhttpd.admin.network_timeout='30'
-    uci set uhttpd.admin.max_requests='3'
-    uci set uhttpd.admin.tcp_keepalive='1'
-    uci set uhttpd.admin.no_dirlists='1'
-    uci set uhttpd.admin.home="$ADMIN_HOME"
-    uci set uhttpd.admin.error_page='/index.html'
-    uci commit uhttpd
-else
-    # Migrate the older scheme (home=/www, SPA at /tollgate/) and keep the error
-    # page pointing at the SPA root.
-    changed=0
-    [ "$(uci -q get uhttpd.admin.home)" = "$ADMIN_HOME" ] || { uci set uhttpd.admin.home="$ADMIN_HOME"; changed=1; }
-    [ "$(uci -q get uhttpd.admin.error_page)" = "/index.html" ] || { uci set uhttpd.admin.error_page='/index.html'; changed=1; }
-    [ "$changed" = 1 ] && uci commit uhttpd
-fi
+uci -q get uhttpd.admin >/dev/null 2>&1 || echo "Creating uhttpd admin instance on :8090 (home ${ADMIN_HOME})"
+uci set uhttpd.admin=uhttpd
+
+# Serve the board over plain HTTP on :8090 — the URL people type
+# (http://<router>:8090/) and the same scheme as LuCI on :8080. A single uhttpd
+# instance cannot serve HTTP and HTTPS on the same port, so an HTTPS-only :8090
+# would make http://<router>:8090/ fail outright.
+uci -q delete uhttpd.admin.listen_http
+uci -q delete uhttpd.admin.listen_https
+uci add_list uhttpd.admin.listen_http='0.0.0.0:8090'
+uci add_list uhttpd.admin.listen_http='[::]:8090'
+uci -q delete uhttpd.admin.cert
+uci -q delete uhttpd.admin.key
+uci set uhttpd.admin.ubus_prefix='/ubus'
+uci set uhttpd.admin.script_timeout='60'
+uci set uhttpd.admin.network_timeout='30'
+uci set uhttpd.admin.max_requests='3'
+uci set uhttpd.admin.tcp_keepalive='1'
+uci set uhttpd.admin.no_dirlists='1'
+uci set uhttpd.admin.home="$ADMIN_HOME"
+uci set uhttpd.admin.error_page='/index.html'
+# Never let the admin port resolve LuCI's CGI: without home=/www there is no
+# LuCI webroot under the board home, but drop the prefixes so a stray
+# /cgi-bin/luci can only ever 404.
+uci -q delete uhttpd.admin.cgi_prefix
+uci -q delete uhttpd.admin.lua_prefix
+
+# :8090 belongs to the admin instance alone
+for sec in $(uci show uhttpd 2>/dev/null | sed -n 's/^uhttpd\.\([^.]*\)=uhttpd$/\1/p'); do
+    [ "$sec" = admin ] && continue
+    uci -q del_list "uhttpd.$sec.listen_http=0.0.0.0:8090"
+    uci -q del_list "uhttpd.$sec.listen_http=[::]:8090"
+    uci -q del_list "uhttpd.$sec.listen_https=0.0.0.0:8090"
+    uci -q del_list "uhttpd.$sec.listen_https=[::]:8090"
+done
+uci commit uhttpd
 
 # Resolve .apk-new files left by apk when existing files were modified.
 find "$ADMIN_HOME" -name '*.apk-new' \
