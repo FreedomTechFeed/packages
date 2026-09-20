@@ -74,8 +74,9 @@ PKG_NAME:=tollgate-wrt
 # upgrades and repins to the degraded-mode recovery pair (module #420/#421), so
 # a mint outage under traffic no longer leaves a router stuck degraded. The
 # release-publish workflow names assets by PKG_VERSION, so each change rides a
-# NEW version.
-PKG_VERSION:=0.6.0_alpha2_pre9
+# NEW version. pre10 hardens 92-tollgate-admin-setup: brand-deterministic :8090
+# webroot, LuCI-proof (delete cgi/lua_prefix), :8090 exclusivity, and de-skin.
+PKG_VERSION:=0.6.0_alpha2_pre10
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -374,6 +375,11 @@ define Package/tollgate-wrt/install
 	$(INSTALL_CONF) $(PKG_MAKEFILE_DIR)files/rpcd/tollgate_acl.json $(1)/usr/share/rpcd/acl.d/tollgate.json
 
 	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/uci-defaults/92-tollgate-admin-setup $(1)/etc/uci-defaults/
+	# Substitute the BRAND webroot into the admin setup script (TollGate build ->
+	# /www/tollgate). The script reads __ADMIN_HOME__ and must never guess the
+	# brand by directory existence — a TollGate build must not serve a leftover
+	# net4sats webroot (and vice versa).
+	$(SED) 's|__ADMIN_HOME__|/www/tollgate|g' $(1)/etc/uci-defaults/92-tollgate-admin-setup
 
 	$(INSTALL_DIR) $(1)/etc/crontabs
 
