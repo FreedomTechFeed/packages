@@ -72,7 +72,7 @@ PKG_NAME:=tollgate-wrt
 # UPSTREAM, so the feed-side 91-tollgate-portal-cachebust workaround is removed
 # (one mechanism, not two). The release-publish workflow names assets by
 # PKG_VERSION, so each change rides a NEW version.
-PKG_VERSION:=0.6.0_alpha2_pre8
+PKG_VERSION:=0.6.0_alpha2_pre9
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
