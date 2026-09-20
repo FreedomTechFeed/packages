@@ -82,7 +82,7 @@ PKG_VERSION:=0.6.0_alpha2_pre8
 # no longer needs its own 91-... workaround.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=a6e01bd96768520f684f98d0f9d8a0d1d48c05f1
+PKG_SOURCE_VERSION:=66c1f70797b308502b596327ad77d99764158f8f
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -109,7 +109,7 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # ec27e23cc3f6676bd586b81f12d3be049207206358cadb6ce53d259873111d57 exactly,
 # which is what makes the method — and therefore the new hash below — trustworthy.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=cec0358ca4ad7bd45c977beeaaa32599f5f6a4950b35ecc309986802ea41d038
+PKG_HASH:=270d16a2ccda3c2aca531d0c7c0397144aa63d45b929dbfee2ce475057d523ad
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
