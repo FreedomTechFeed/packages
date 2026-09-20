@@ -70,19 +70,24 @@ PKG_NAME:=tollgate-wrt
 # assets); pre5 added the portal ENTRY cache-bust and the CLI main.version
 # injection. pre6 repins to the module commit that carries the cache-bust
 # UPSTREAM, so the feed-side 91-tollgate-portal-cachebust workaround is removed
-# (one mechanism, not two). The release-publish workflow names assets by
-# PKG_VERSION, so each change rides a NEW version.
-PKG_VERSION:=0.6.0_alpha2_pre8
+# (one mechanism, not two). pre9 adds the postinst service restart for in-place
+# upgrades and repins to the degraded-mode recovery pair (module #420/#421), so
+# a mint outage under traffic no longer leaves a router stuck degraded. The
+# release-publish workflow names assets by PKG_VERSION, so each change rides a
+# NEW version.
+PKG_VERSION:=0.6.0_alpha2_pre9
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
 # untested tip), so we pin the commit. This is the tip of main; main's CHANGELOG
 # carries "[v0.6.0-alpha2]". pre6 advances the pin from 373770a to d0cb92f2
 # (module #404: the 90-tollgate-captive-portal-symlink cache-bust) so the feed
-# no longer needs its own 91-... workaround.
+# no longer needs its own 91-... workaround. pre9 advances the pin to 125f6a0
+# (module #421, the runtime-downgrade recovery — with #420, the MarkUnreachable
+# callback, already beneath it), replacing the interim 66c1f70 (#410) pin.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=66c1f70797b308502b596327ad77d99764158f8f
+PKG_SOURCE_VERSION:=125f6a0645f62d0d0994305623ab6b3e68f75f43
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -109,7 +114,7 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # ec27e23cc3f6676bd586b81f12d3be049207206358cadb6ce53d259873111d57 exactly,
 # which is what makes the method — and therefore the new hash below — trustworthy.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=270d16a2ccda3c2aca531d0c7c0397144aa63d45b929dbfee2ce475057d523ad
+PKG_HASH:=d840dc760eb0c67be2720eb9d03ea3bbc4dd6b9f0c192947af4aba5b9061815e
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
@@ -355,9 +360,10 @@ define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/etc/tollgate/tollgate-captive-portal-site
 	$(CP) $(PKG_MAKEFILE_DIR)files/tollgate-captive-portal-site/. $(1)/etc/tollgate/tollgate-captive-portal-site/
 
-	# Admin board (Preact SPA) served by the dedicated uhttpd instance on
-	# :8090. It lives under /www/tollgate (base /tollgate/) and talks to the
-	# tollgate ubus object provided by the rpcd plugin below.
+	# Admin board (Preact SPA) served at the ROOT of the dedicated uhttpd
+	# instance on :8090, from its brand webroot (/www/tollgate, or
+	# /www/net4sats for net4sats builds); it talks to the tollgate ubus
+	# object provided by the rpcd plugin below.
 	$(INSTALL_DIR) $(1)/www/tollgate
 	$(CP) $(PKG_MAKEFILE_DIR)files/tollgate-admin/. $(1)/www/tollgate/
 
