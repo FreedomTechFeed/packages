@@ -1,0 +1,37 @@
+name: Vendor drift guard
+
+# The feed vendors files owned by other repos — notably the admin
+# 92-tollgate-admin-setup from OpenTollGate/tollgate-captive-portal-site. A
+# stale copy shipped the pre10 admin regression, so fail fast whenever the
+# vendored file drifts from portal main.
+#
+# push/pull_request are path-filtered to the vendored file; the daily schedule
+# run has no path filter and therefore also catches drift introduced on the
+# PORTAL side (an upstream edit the feed has not re-vendored yet).
+
+on:
+  push:
+    paths:
+      - 'net/tollgate-wrt/files/uci-defaults/92-tollgate-admin-setup'
+  pull_request:
+    paths:
+      - 'net/tollgate-wrt/files/uci-defaults/92-tollgate-admin-setup'
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  admin-92:
+    name: vendored 92 == portal main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare vendored admin setup with portal main
+        run: sh .github/scripts/check-vendor-drift.sh

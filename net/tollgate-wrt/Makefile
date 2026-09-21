@@ -76,9 +76,14 @@ PKG_NAME:=tollgate-wrt
 # release-publish workflow names assets by PKG_VERSION, so each change rides a
 # NEW version. pre10 hardened 92-tollgate-admin-setup, but its second commit
 # (a7ccc509) re-vendored the script back to the pre9 version — pre11 re-vendors
-# it from portal-site main (#43, 914ec640): HTTPS-only :8090 on the router's
-# self-signed cert, brand-deterministic webroot (__ADMIN_HOME__), LuCI-proof
-# (delete cgi/lua_prefix), :8090 exclusivity, and de-skin.
+# it from portal-site main (#44, a260172): the board is served over HTTP on
+# :8090 (the URL people type; HTTPS-only :8090 made http://<router>:8090/ dead
+# on the MT3000), with an OPT-IN HTTPS listener on :8443 when a cert/key pair
+# exists — one uhttpd instance cannot serve HTTP and HTTPS on the same port. It
+# keeps the brand-deterministic webroot (__ADMIN_HOME__), LuCI-proofing (delete
+# cgi/lua_prefix), :8090/:8443 exclusivity, and de-skin. pre11 also repins the
+# module (below) to #449 (netifd wireless-status Wi-Fi scan) + #458 (captive-LAN
+# access to :8090/:8443).
 PKG_VERSION:=0.6.0_alpha2_pre11
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
@@ -89,9 +94,12 @@ PKG_VERSION:=0.6.0_alpha2_pre11
 # no longer needs its own 91-... workaround. pre9 advances the pin to 125f6a0
 # (module #421, the runtime-downgrade recovery — with #420, the MarkUnreachable
 # callback, already beneath it), replacing the interim 66c1f70 (#410) pin.
+# pre11 advances the pin to 170b4bd (module #449: the netifd wireless-status
+# Wi-Fi scan that replaces the uci-name iwinfo call; #458: captive-LAN access to
+# the admin board on :8090/:8443), replacing the 125f6a0 (#421) pin.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=125f6a0645f62d0d0994305623ab6b3e68f75f43
+PKG_SOURCE_VERSION:=170b4bd861836469f21ae9813233bae674b266f1
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -117,8 +125,10 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # the OUTGOING pin (089e876) reproduced the previously committed
 # ec27e23cc3f6676bd586b81f12d3be049207206358cadb6ce53d259873111d57 exactly,
 # which is what makes the method — and therefore the new hash below — trustworthy.
+# pre11 re-calibrated for the 170b4bd pin: the same construction
+# (codeload .../tar.gz/<sha>?) yields this tarball, sha256 == PKG_HASH below.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=d840dc760eb0c67be2720eb9d03ea3bbc4dd6b9f0c192947af4aba5b9061815e
+PKG_HASH:=be7f40a6751420943ae1c547e2aafb74681dedf17839d0b4b6e3c9b4716125dd
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
