@@ -1,21 +1,34 @@
 name: Vendor drift guard
 
-# The feed vendors files owned by other repos — notably the admin
-# 92-tollgate-admin-setup from OpenTollGate/tollgate-captive-portal-site. A
-# stale copy shipped the pre10 admin regression, so fail fast whenever the
-# vendored file drifts from portal main.
+# The feed vendors files owned by other repos. A stale copy shipped the pre10
+# admin regression, so guard them three ways:
+#   1. source-drift   — vendored 92 + rpcd ACL == portal main (byte compare)
+#   2. bundle-lock    — the prebuilt portal/admin bundles match vendor.lock.json
+#   3. bundle-rebuild — rebuild the portal at the locked commit and diff the
+#                       result against the vendored bundles (scheduled/manual)
 #
-# push/pull_request are path-filtered to the vendored file; the daily schedule
-# run has no path filter and therefore also catches drift introduced on the
-# PORTAL side (an upstream edit the feed has not re-vendored yet).
+# build/ is gitignored in the portal repo, so (3) is the only way to catch a
+# bundle that was rebuilt without re-vendoring; it needs node + npm ci.
 
 on:
   push:
     paths:
       - 'net/tollgate-wrt/files/uci-defaults/92-tollgate-admin-setup'
+      - 'net/tollgate-wrt/files/rpcd/tollgate_acl.json'
+      - 'net/tollgate-wrt/files/tollgate-admin/**'
+      - 'net/tollgate-wrt/files/tollgate-captive-portal-site/**'
+      - 'net/tollgate-wrt/vendor.lock.json'
+      - '.github/scripts/**'
+      - '.github/workflows/vendor-drift.yml'
   pull_request:
     paths:
       - 'net/tollgate-wrt/files/uci-defaults/92-tollgate-admin-setup'
+      - 'net/tollgate-wrt/files/rpcd/tollgate_acl.json'
+      - 'net/tollgate-wrt/files/tollgate-admin/**'
+      - 'net/tollgate-wrt/files/tollgate-captive-portal-site/**'
+      - 'net/tollgate-wrt/vendor.lock.json'
+      - '.github/scripts/**'
+      - '.github/workflows/vendor-drift.yml'
   schedule:
     - cron: '17 6 * * *'
   workflow_dispatch:
@@ -24,14 +37,54 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: vendor-drift-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  admin-92:
-    name: vendored 92 == portal main
+  source-drift:
+    name: 92 + ACL == portal main
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compare vendored admin setup with portal main
-        run: sh .github/scripts/check-vendor-drift.sh
+      - run: sh .github/scripts/check-vendor-drift.sh
+
+  bundle-lock:
+    name: bundles match vendor.lock.json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/scripts/vendor_lock.py check
+
+  bundle-rebuild:
+    name: rebuild portal@lock == vendored bundles
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Rebuild the portal at the locked commit
+        run: |
+          set -euo pipefail
+          read -r REPO COMMIT < <(python3 - <<'PY'
+          import json
+          d = json.load(open("net/tollgate-wrt/vendor.lock.json"))
+          print(d["portal_repo"], d["portal_commit"])
+          PY
+          )
+          echo "rebuilding ${REPO}@${COMMIT}"
+          git clone --quiet "https://github.com/${REPO}" /tmp/portal
+          git -C /tmp/portal checkout --quiet "$COMMIT"
+          ( cd /tmp/portal && npm ci --no-audit --no-fund && npm run build )
+
+      - name: Diff the rebuild against the vendored bundles
+        run: |
+          set -euo pipefail
+          diff -r /tmp/portal/build "net/tollgate-wrt/files/tollgate-captive-portal-site" \
+            --exclude=admin --exclude=welcome.html
+          diff -r /tmp/portal/build/admin "net/tollgate-wrt/files/tollgate-admin"
+          diff /tmp/portal/openwrt/rpcd/tollgate_acl.json "net/tollgate-wrt/files/rpcd/tollgate_acl.json"
+          echo "OK: vendored bundles == a clean rebuild of the locked commit"
