@@ -76,7 +76,12 @@ PKG_NAME:=tollgate-wrt
 # release-publish workflow names assets by PKG_VERSION, so each change rides a
 # NEW version. pre10 hardens 92-tollgate-admin-setup: brand-deterministic :8090
 # webroot, LuCI-proof (delete cgi/lua_prefix), :8090 exclusivity, and de-skin.
-PKG_VERSION:=0.6.0_alpha2_pre10
+# pre11 makes :8090 self-healing (unconditional listen_http + webroot on every
+# run, so it repairs an old home=/www or a stale HTTPS-only :8090) and adds an
+# opt-in HTTPS listener on :8443 when a cert/key pair exists. It also repins the
+# module to #449 (netifd wireless-status Wi-Fi scan) + #458 (captive-LAN access
+# to :8090/:8443).
+PKG_VERSION:=0.6.0_alpha2_pre11
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets

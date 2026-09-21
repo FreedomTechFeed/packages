@@ -1,15 +1,18 @@
 #!/bin/sh
-# TollGate admin board setup: create the dedicated uhttpd instance on :8090 and
+# TollGate admin board setup: create/repair the dedicated uhttpd instance and
 # make sure rpcd (which serves the `tollgate` ubus object) is running.
 #
-# The admin SPA is served at the ROOT of :8090 from its brand webroot
-# (/www/tollgate, or /www/net4sats for net4sats builds). LuCI stays on
+# The admin SPA is served at the ROOT of :8090 over HTTP from its brand webroot
+# (/www/tollgate, or /www/net4sats for net4sats builds); when /etc/uhttpd.crt
+# and /etc/uhttpd.key exist, an opt-in HTTPS listener is also added on :8443
+# (one uhttpd instance cannot do HTTP+HTTPS on the same port). LuCI stays on
 # uhttpd.main (:8080; webroot /www) and the captive portal on uhttpd.portal
 # (:2051); neither is touched here, and the admin instance never exposes LuCI's
 # /www.
 #
-# Idempotent: creates the section if missing, and migrates the older
-# home=/www + /tollgate/ scheme.
+# Idempotent and self-healing: every run re-asserts the listeners, webroot and
+# LuCI-proofing, so it also repairs the older home=/www scheme and a stale
+# HTTPS-only :8090 left behind by an earlier experiment.
 
 ADMIN_HOME=
 for candidate in /www/tollgate /www/net4sats; do
@@ -25,14 +28,22 @@ uci set uhttpd.admin=uhttpd
 
 # Serve the board over plain HTTP on :8090 — the URL people type
 # (http://<router>:8090/) and the same scheme as LuCI on :8080. A single uhttpd
-# instance cannot serve HTTP and HTTPS on the same port, so an HTTPS-only :8090
-# would make http://<router>:8090/ fail outright.
+# instance cannot serve HTTP and HTTPS on the same port (bind: Address already
+# in use), so HTTPS is offered OPT-IN on a separate port (:8443) when a
+# cert/key pair exists. Never advertise a TLS listener without a cert: uhttpd
+# would fail to start it.
 uci -q delete uhttpd.admin.listen_http
 uci -q delete uhttpd.admin.listen_https
 uci add_list uhttpd.admin.listen_http='0.0.0.0:8090'
 uci add_list uhttpd.admin.listen_http='[::]:8090'
 uci -q delete uhttpd.admin.cert
 uci -q delete uhttpd.admin.key
+if [ -f /etc/uhttpd.crt ] && [ -f /etc/uhttpd.key ]; then
+    uci add_list uhttpd.admin.listen_https='0.0.0.0:8443'
+    uci add_list uhttpd.admin.listen_https='[::]:8443'
+    uci set uhttpd.admin.cert='/etc/uhttpd.crt'
+    uci set uhttpd.admin.key='/etc/uhttpd.key'
+fi
 uci set uhttpd.admin.ubus_prefix='/ubus'
 uci set uhttpd.admin.script_timeout='60'
 uci set uhttpd.admin.network_timeout='30'
@@ -47,13 +58,15 @@ uci set uhttpd.admin.error_page='/index.html'
 uci -q delete uhttpd.admin.cgi_prefix
 uci -q delete uhttpd.admin.lua_prefix
 
-# :8090 belongs to the admin instance alone
+# :8090 (and the admin TLS port :8443) belong to the admin instance alone
 for sec in $(uci show uhttpd 2>/dev/null | sed -n 's/^uhttpd\.\([^.]*\)=uhttpd$/\1/p'); do
     [ "$sec" = admin ] && continue
     uci -q del_list "uhttpd.$sec.listen_http=0.0.0.0:8090"
     uci -q del_list "uhttpd.$sec.listen_http=[::]:8090"
     uci -q del_list "uhttpd.$sec.listen_https=0.0.0.0:8090"
     uci -q del_list "uhttpd.$sec.listen_https=[::]:8090"
+    uci -q del_list "uhttpd.$sec.listen_https=0.0.0.0:8443"
+    uci -q del_list "uhttpd.$sec.listen_https=[::]:8443"
 done
 uci commit uhttpd
 
