@@ -87,8 +87,12 @@ PKG_NAME:=tollgate-wrt
 # cdd5028) to re-assert the captive-LAN :8090/:8443 users_to_router allow on
 # EVERY install: the module's 99-tollgate-setup only applies it on a full setup
 # pass, which apk upgrades skip (upstream #459), so an upgrade could leave :8443
-# unreachable. Module pin/hash unchanged.
-PKG_VERSION:=0.6.0_alpha2_pre12
+# unreachable. pre13 re-vendors the portal + admin bundles (portal-site main
+# #47/#48 + #46) and the tollgate rpcd ACL (allowing /tmp/dhcp.leases read so the
+# board Devices page works on OpenWrt 25.x), and adds a cert-guarded
+# uhttpd.main.redirect_https so LuCI's http://:8080 stops warning about an
+# insecure password field. Module pin/hash unchanged.
+PKG_VERSION:=0.6.0_alpha2_pre13
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
