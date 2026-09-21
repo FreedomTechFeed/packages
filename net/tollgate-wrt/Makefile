@@ -83,8 +83,12 @@ PKG_NAME:=tollgate-wrt
 # keeps the brand-deterministic webroot (__ADMIN_HOME__), LuCI-proofing (delete
 # cgi/lua_prefix), :8090/:8443 exclusivity, and de-skin. pre11 also repins the
 # module (below) to #449 (netifd wireless-status Wi-Fi scan) + #458 (captive-LAN
-# access to :8090/:8443).
-PKG_VERSION:=0.6.0_alpha2_pre11
+# access to :8090/:8443). pre12 re-vendors 92 from portal-site main (#45,
+# cdd5028) to re-assert the captive-LAN :8090/:8443 users_to_router allow on
+# EVERY install: the module's 99-tollgate-setup only applies it on a full setup
+# pass, which apk upgrades skip (upstream #459), so an upgrade could leave :8443
+# unreachable. Module pin/hash unchanged.
+PKG_VERSION:=0.6.0_alpha2_pre12
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
