@@ -74,9 +74,12 @@ PKG_NAME:=tollgate-wrt
 # upgrades and repins to the degraded-mode recovery pair (module #420/#421), so
 # a mint outage under traffic no longer leaves a router stuck degraded. The
 # release-publish workflow names assets by PKG_VERSION, so each change rides a
-# NEW version. pre10 hardens 92-tollgate-admin-setup: brand-deterministic :8090
-# webroot, LuCI-proof (delete cgi/lua_prefix), :8090 exclusivity, and de-skin.
-PKG_VERSION:=0.6.0_alpha2_pre10
+# NEW version. pre10 hardened 92-tollgate-admin-setup, but its second commit
+# (a7ccc509) re-vendored the script back to the pre9 version — pre11 re-vendors
+# it from portal-site main (#43, 914ec640): HTTPS-only :8090 on the router's
+# self-signed cert, brand-deterministic webroot (__ADMIN_HOME__), LuCI-proof
+# (delete cgi/lua_prefix), :8090 exclusivity, and de-skin.
+PKG_VERSION:=0.6.0_alpha2_pre11
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
