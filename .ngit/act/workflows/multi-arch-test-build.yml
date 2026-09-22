@@ -82,6 +82,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Build captive-portal + admin SPAs from the pinned portal commit and
+      # stage into net/tollgate-wrt/files/ (build-in-CI rule #335). gh-action-sdk
+      # mounts this workspace as /feed, so the Makefile consumes what this staged.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build + stage portal bundle
+        run: |
+          set -euo pipefail
+          bash net/tollgate-wrt/scripts/build-portal-bundle.sh
+
       - name: Determine branch name
         run: |
           BRANCH="${GITHUB_BASE_REF#refs/heads/}"

@@ -1,32 +1,40 @@
 name: Vendor drift guard
 
-# The feed vendors files owned by other repos. A stale copy shipped the pre10
-# admin regression, so guard them three ways:
-#   1. source-drift   — vendored 92 + rpcd ACL == portal main (byte compare)
-#   2. bundle-lock    — the prebuilt portal/admin bundles match vendor.lock.json
-#   3. bundle-rebuild — rebuild the portal at the locked commit and diff the
-#                       result against the vendored bundles (scheduled/manual)
+# The feed vendors a few SOURCE files owned by other repos (build-in-CI rule
+# #335: never commit BUILT assets). Guard it three ways:
+#   1. source-drift    — vendored 92 + rpcd ACL == portal (the pinned source)
+#   2. bundle-rebuild  — rebuild the portal at the pinned commit and verify the
+#                        staged bundle byte-matches vendor.lock.json
 #
-# build/ is gitignored in the portal repo, so (3) is the only way to catch a
-# bundle that was rebuilt without re-vendoring; it needs node + npm ci.
+# The built bundles (guest portal + admin SPA) are NOT vendored/committed
+# anymore: scripts/build-portal-bundle.sh stages them into files/ at CI time and
+# self-verifies against vendor.lock.json (the pinned-bytes manifest). So the
+# old bundle-lock job (which compared a committed tree) is gone, and
+# bundle-rebuild now runs the same authoritative builder the SDK build uses.
+#
+# build/ is gitignored in the portal repo, and the feed no longer carries a
+# committed copy, so a rebuild+differ against the lock is the only way to prove
+# the package ships exactly what the pin produces; it needs node + npm ci.
+#
+# CI-enforced ordering (do NOT invert): the portal repo merges FIRST, then this
+# feed re-vendors the 92/ACL source and bumps the lock pin to the new portal
+# commit. vendor.lock.json's portal_commit is the single source of truth.
 
 on:
   push:
     paths:
       - 'net/tollgate-wrt/files/uci-defaults/92-tollgate-admin-setup'
       - 'net/tollgate-wrt/files/rpcd/tollgate_acl.json'
-      - 'net/tollgate-wrt/files/tollgate-admin/**'
-      - 'net/tollgate-wrt/files/tollgate-captive-portal-site/**'
       - 'net/tollgate-wrt/vendor.lock.json'
+      - 'net/tollgate-wrt/scripts/**'
       - '.github/scripts/**'
       - '.github/workflows/vendor-drift.yml'
   pull_request:
     paths:
       - 'net/tollgate-wrt/files/uci-defaults/92-tollgate-admin-setup'
       - 'net/tollgate-wrt/files/rpcd/tollgate_acl.json'
-      - 'net/tollgate-wrt/files/tollgate-admin/**'
-      - 'net/tollgate-wrt/files/tollgate-captive-portal-site/**'
       - 'net/tollgate-wrt/vendor.lock.json'
+      - 'net/tollgate-wrt/scripts/**'
       - '.github/scripts/**'
       - '.github/workflows/vendor-drift.yml'
   schedule:
@@ -42,49 +50,24 @@ concurrency:
 
 jobs:
   source-drift:
-    name: 92 + ACL == portal main
+    name: 92 + ACL == portal
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: sh .github/scripts/check-vendor-drift.sh
 
-  bundle-lock:
-    name: bundles match vendor.lock.json
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: python3 .github/scripts/vendor_lock.py check
-
   bundle-rebuild:
-    name: rebuild portal@lock == vendored bundles
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: rebuild portal@lock == vendor.lock.json
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
-      - name: Rebuild the portal at the locked commit
+      - name: Build + stage + verify the portal bundle
         run: |
           set -euo pipefail
-          read -r REPO COMMIT < <(python3 - <<'PY'
-          import json
-          d = json.load(open("net/tollgate-wrt/vendor.lock.json"))
-          print(d["portal_repo"], d["portal_commit"])
-          PY
-          )
-          echo "rebuilding ${REPO}@${COMMIT}"
-          git clone --quiet "https://github.com/${REPO}" /tmp/portal
-          git -C /tmp/portal checkout --quiet "$COMMIT"
-          ( cd /tmp/portal && npm ci --no-audit --no-fund && npm run build )
-
-      - name: Diff the rebuild against the vendored bundles
-        run: |
-          set -euo pipefail
-          diff -r /tmp/portal/build "net/tollgate-wrt/files/tollgate-captive-portal-site" \
-            --exclude=admin --exclude=welcome.html
-          diff -r /tmp/portal/build/admin "net/tollgate-wrt/files/tollgate-admin"
-          diff /tmp/portal/openwrt/rpcd/tollgate_acl.json "net/tollgate-wrt/files/rpcd/tollgate_acl.json"
-          echo "OK: vendored bundles == a clean rebuild of the locked commit"
+          bash net/tollgate-wrt/scripts/build-portal-bundle.sh
+          echo "OK: portal bundle staged and byte-verified against vendor.lock.json"
