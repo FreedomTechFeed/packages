@@ -7,3 +7,7 @@
 /.env
 /.env.*
 /*.patch
+# Built portal/admin SPAs — staged into files/ by scripts/build-portal-bundle.sh
+# (build-in-CI rule #335). Never commit these; CI produces and consumes them.
+/net/tollgate-wrt/files/tollgate-captive-portal-site/
+/net/tollgate-wrt/files/tollgate-admin/
