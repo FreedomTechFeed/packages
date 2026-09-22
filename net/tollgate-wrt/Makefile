@@ -4,8 +4,9 @@
 #
 # Directory holding this recipe, captured BEFORE any include so
 # $(MAKEFILE_LIST)'s last word is still this file (rules.mk/package.mk append
-# many paths, e.g. the toolchain dir). Used to install the vendored
-# captive-portal assets — see the install recipe and files/ note below.
+# many paths, e.g. the toolchain dir). Used to install the portal/admin
+# assets staged into files/ by scripts/build-portal-bundle.sh (build-in-CI) —
+# see the install recipe and files/ note below.
 PKG_MAKEFILE_DIR:=$(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 #
 # This feed package downloads the upstream source tarball and builds it with
@@ -20,12 +21,15 @@ PKG_MAKEFILE_DIR:=$(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 # releases its own .ipk from the same tree. Bumping PKG_SOURCE_VERSION pulls in
 # the matching runtime files automatically.
 #
-# ONE EXCEPTION — the captive portal site IS vendored, under
-# files/tollgate-captive-portal-site/. Its built assets/ dir is gitignored
-# upstream and only produced by packaging/portal-build.sh (Node/npm), which the
-# OpenWrt SDK build cannot run; without vendoring, the package ships splash.html
-# with dangling /assets/*.js|css references and the portal never boots. See the
-# note above the install recipe for the full rationale.
+# The captive-portal + admin SPAs are built IN CI (build-in-CI rule, #335): a
+# workflow step runs net/tollgate-wrt/scripts/build-portal-bundle.sh, which
+# clones OpenTollGate/tollgate-captive-portal-site at the immutable commit
+# pinned in vendor.lock.json, runs `npm run build`, and stages the result under
+# files/tollgate-captive-portal-site/ and files/tollgate-admin/. The
+# gh-action-sdk build mounts the workspace as /feed, so the install recipe below
+# sees those staged files and ships them. No built asset is committed to this
+# repo. See docs/architecture/portal-bundle-ownership.md for the placement map
+# and net/tollgate-wrt/test-devendored.sh for the guard.
 #
 # Versioning: PKG_VERSION (apk-legal, underscore) names the package version
 # while PKG_SOURCE_VERSION (the immutable upstream COMMIT SHA) drives the
@@ -115,11 +119,12 @@ PKG_SOURCE_TAG:=v0.6.0-alpha2
 # Short SHA for that human-facing version string; the full SHA stays in
 # GitCommit, which is what a bug report should quote.
 PKG_SOURCE_SHA7:=$(shell printf '%s' $(PKG_SOURCE_VERSION) | cut -c1-7)
-# PKG_RELEASE resets to 1 on a PKG_VERSION bump. The captive-portal assets are
-# vendored (see the files/ note above the install recipe): upstream gitignores
-# them and only builds them in CI, so without vendoring the package shipped
-# splash.html referencing /assets/*.js|css that were never built and the portal
-# died with "disallowed MIME type (text/html)" / NS_ERROR_CORRUPTED_CONTENT.
+# PKG_RELEASE resets to 1 on a PKG_VERSION bump. The captive-portal and admin
+# SPAs are built IN CI (scripts/build-portal-bundle.sh) and staged into files/
+# for this recipe; upstream gitignores them and only produces them via `npm run
+# build`. Without the CI build the package ships splash.html referencing
+# /assets/*.js|css that were never built and the portal died with "disallowed
+# MIME type (text/html)" / NS_ERROR_CORRUPTED_CONTENT.
 PKG_RELEASE:=1
 
 PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
@@ -319,19 +324,12 @@ endef
 # packaging/files/ directory (see PKG_TARBALL_DIR above); the binaries install
 # lines use $(GO_PKG_BUILD_BIN_DIR) and stay unchanged.
 #
-# EXCEPTION — the captive portal site is VENDORED from this feed's files/
-# directory. The upstream repo gitignores packaging/files/tollgate-captive-
-# portal-site/assets/ (commit "build portal assets from source, stop
-# committing minified JS") and only produces it at package time via
-# packaging/portal-build.sh (Node/npm + the tollgate-captive-portal-site
-# repo). The OpenWrt SDK build this feed uses has no npm step, so the tarball
-# ships splash.html with hashed /assets/*.js|css references but none of the
-# bundles — the portal SPA then fails with "disallowed MIME type (text/html)"
-# (uhttpd answers the missing files with its HTML 404 page) and never boots.
-# The prebuilt, self-consistent bundle (HTML + assets from the same portal
-# commit, plus the module-only welcome.html) is committed under
-# files/tollgate-captive-portal-site/ and installed here instead of the
-# tarball copy.
+# The captive portal + admin SPAs are staged under this repo's files/ by the
+# CI build (scripts/build-portal-bundle.sh, build-in-CI rule #335), so the
+# install lines below consume what CI produced. They are NOT vendored/committed.
+# welcome.html is MODULE-owned (the portal repo's `npm run build` never emits
+# it), so it ships from the module source tarball -- byte-identical in both
+# repos today, and any future change originates upstream in the module.
 define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/tollgate-module-basic-go $(1)/usr/bin/tollgate-wrt
@@ -380,7 +378,11 @@ define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/etc/tollgate/ecash
 
 	$(INSTALL_DIR) $(1)/etc/tollgate/tollgate-captive-portal-site
+	# The guest portal + admin SPAs are staged into files/ by scripts/build-portal-bundle.sh
+	# (build-in-CI rule #335) and consumed by the $(CP) below. welcome.html is MODULE-owned
+	# (the portal build never emits it) and comes from the source tarball.
 	$(CP) $(PKG_MAKEFILE_DIR)files/tollgate-captive-portal-site/. $(1)/etc/tollgate/tollgate-captive-portal-site/
+	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/tollgate-captive-portal-site/welcome.html $(1)/etc/tollgate/tollgate-captive-portal-site/
 
 	# Admin board (Preact SPA) served at the ROOT of the dedicated uhttpd
 	# instance on :8090, from its brand webroot (/www/tollgate, or

@@ -32,6 +32,6 @@
     "net/tollgate-wrt/files/tollgate-captive-portal-site/manifest.json": "958320fa037d9a44d0bab782543dbce199eac32e072ccb115b922b9e50b67146",
     "net/tollgate-wrt/files/tollgate-captive-portal-site/splash.html": "dc65a4f1df4ef3948def0f0f745cdad0d37c7ff1f605ee596b442886863c9489"
   },
-  "portal_commit": "4f74a6dd5a",
+  "portal_commit": "4f74a6dd5a7c4dc985d55e72978a076cf8bbebaf",
   "portal_repo": "OpenTollGate/tollgate-captive-portal-site"
 }
