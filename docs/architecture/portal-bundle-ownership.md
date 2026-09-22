@@ -80,13 +80,14 @@ from the tarball only.)
 These are **not** build output — they are tracked source in the portal repo, so
 vendoring them (with a drift guard) is the correct pattern, not a #335
 violation. They remain committed under `files/` and the guard byte-compares them
-against portal `origin/main`.
+against the **pinned release commit** (`vendor.lock.json` → `portal_commit`), not
+portal `main` — see "What the drift guard now does" below.
 
 | feed file | portal source | status |
 |---|---|---|
-| `files/uci-defaults/92-tollgate-admin-setup` | `packaging/files/etc/uci-defaults/92-tollgate-admin-setup` | **VENDORED SOURCE.** NOTE: currently DRIFTED — feed == pin `4f74a6dd`; portal `main` `019f4de` carries PR #51's "require a live :443 listener" guard. Re-vendoring is part of the pre14 re-pin (W6), which is outside this card. Ordering enforced: portal merges first, then the feed re-vendors. |
-| `files/rpcd/tollgate` (exec sh) | `openwrt/rpcd/tollgate` | IN SYNC (`05852546…`). VENDORED SOURCE. |
-| `files/rpcd/tollgate_acl.json` | `openwrt/rpcd/tollgate_acl.json` | IN SYNC (`14ffed79…`). VENDORED SOURCE, and locked in `vendor.lock.json`. |
+| `files/uci-defaults/92-tollgate-admin-setup` | `packaging/files/etc/uci-defaults/92-tollgate-admin-setup` | **VENDORED SOURCE.** In sync with the pre14 pin `992cf7f1` (`ebe1332f…`, 8937 B). Ordering enforced: portal merges first, then the feed re-pins (pin bump + re-vendor from the SAME commit, atomic). |
+| `files/rpcd/tollgate` (exec sh) | `openwrt/rpcd/tollgate` | IN SYNC with the pin (`05852546…`). VENDORED SOURCE. |
+| `files/rpcd/tollgate_acl.json` | `openwrt/rpcd/tollgate_acl.json` | IN SYNC with the pin (`14ffed79…`). VENDORED SOURCE, and locked in `vendor.lock.json`. |
 
 ### Runtime files — OWNER: `OpenTollGate/tollgate-module-basic-go` (module, via tarball)
 
@@ -97,8 +98,16 @@ nftables.d, hotplug.d, usr/bin helpers, keep.d are installed from
 ## What the drift guard now does (honest)
 
 `vendor-drift.yml`:
-- **source-drift** — byte-compares vendored `92` + rpcd ACL against portal
-  `origin/main` (unchanged; the ordering rule is not inverted).
+- **source-drift** — byte-compares the three vendored portal-owned files
+  (`92-tollgate-admin-setup`, `rpcd/tollgate`, `rpcd/tollgate_acl.json`) against
+  the **pinned release commit** in `vendor.lock.json` → `portal_commit` — the same
+  SHA `build-portal-bundle.sh` stages from and the module releases against.
+  **It no longer compares to portal `main`.** Comparing to a moving branch made
+  the guard red on every unrelated portal commit, which forced ad-hoc byte-copying
+  and let the shipped `92` diverge from the package's own pin — the pre10 admin
+  regression class. A red guard now means *"this release's pin is not synced"*,
+  which is actionable, instead of *"upstream moved"*. (Override for an ad-hoc
+  check: `PORTAL_REF=<sha> sh .github/scripts/check-vendor-drift.sh`.)
 - **bundle-rebuild** — runs `scripts/build-portal-bundle.sh` (the same builder
   the SDK uses) and byte-verifies the staged bundle against `vendor.lock.json`.
   The old `bundle-lock` job and `vendor_lock.py` are gone: there is no committed
@@ -106,9 +115,10 @@ nftables.d, hotplug.d, usr/bin helpers, keep.d are installed from
 
 ## CI-enforced ordering (do not invert)
 
-1. **Portal merges FIRST,** then the feed re-vendors `92`/ACL and bumps
-   `vendor.lock.json`'s pin. If the feed vendors a portal head the portal has
-   not merged, `source-drift` fails.
+1. **Portal merges FIRST,** then the feed re-pins — the lock's `portal_commit`
+   and the vendored `92`/rpcd copies move **together in one commit**, taken from
+   that same SHA. If the feed's vendored copy does not equal its own pin,
+   `source-drift` fails.
 2. `#335` is now mechanically enforced: `test-devendored.sh` Gate A fails if any
    built bundle file is re-committed under `files/`; Gate B fails if the CI
    wiring (or its ngit lane) stops producing the bundle; Gate C fails if the pin
