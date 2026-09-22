@@ -2,7 +2,8 @@ name: Vendor drift guard
 
 # The feed vendors a few SOURCE files owned by other repos (build-in-CI rule
 # #335: never commit BUILT assets). Guard it three ways:
-#   1. source-drift    — vendored 92 + rpcd ACL == portal (the pinned source)
+#   1. source-drift    — vendored 92 + rpcd (plugin, ACL) == the PINNED release
+#                        commit (vendor.lock.json -> portal_commit), NOT portal main
 #   2. bundle-rebuild  — rebuild the portal at the pinned commit and verify the
 #                        staged bundle byte-matches vendor.lock.json
 #
@@ -17,14 +18,17 @@ name: Vendor drift guard
 # the package ships exactly what the pin produces; it needs node + npm ci.
 #
 # CI-enforced ordering (do NOT invert): the portal repo merges FIRST, then this
-# feed re-vendors the 92/ACL source and bumps the lock pin to the new portal
-# commit. vendor.lock.json's portal_commit is the single source of truth.
+# feed re-pins — the lock's portal_commit and the vendored 92 + rpcd copies move
+# together in ONE commit, taken from that same SHA. vendor.lock.json's
+# portal_commit is the single source of truth; the guard reads it directly, so a
+# new portal commit does not turn this red until the feed re-pins to it.
 
 on:
   push:
     paths:
       - 'net/tollgate-wrt/files/uci-defaults/92-tollgate-admin-setup'
       - 'net/tollgate-wrt/files/rpcd/tollgate_acl.json'
+      - 'net/tollgate-wrt/files/rpcd/tollgate'
       - 'net/tollgate-wrt/vendor.lock.json'
       - 'net/tollgate-wrt/scripts/**'
       - '.github/scripts/**'
@@ -33,6 +37,7 @@ on:
     paths:
       - 'net/tollgate-wrt/files/uci-defaults/92-tollgate-admin-setup'
       - 'net/tollgate-wrt/files/rpcd/tollgate_acl.json'
+      - 'net/tollgate-wrt/files/rpcd/tollgate'
       - 'net/tollgate-wrt/vendor.lock.json'
       - 'net/tollgate-wrt/scripts/**'
       - '.github/scripts/**'
@@ -50,7 +55,7 @@ concurrency:
 
 jobs:
   source-drift:
-    name: 92 + ACL == portal
+    name: vendored 92 + rpcd == pinned portal commit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
