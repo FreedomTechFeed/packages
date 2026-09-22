@@ -1,0 +1,16 @@
+# Gitleaks allowlist for this repo — known false positives only.
+#
+# dcce4729... — public Nostr identity pubkey (npub, hex). It appears in built
+# portal/admin JS bundles that were historically VENDORED into
+# net/tollgate-wrt/files/tollgate-captive-portal-site/assets/ before #335/#21
+# de-vendored them (commit 523a6f3 introduced them, 33d6c4d removed them).
+# The string is gone from the HEAD tree; push-range scans (HEAD~5..HEAD) still
+# see it in upstream-owned history. A Nostr pubkey is public by design — it is
+# NOT a credential — so gitleaks' generic-api-key rule is a false positive here.
+# Keep this entry ONLY for historical-range false positives; never allowlist a
+# real secret (nsec, token, password).
+[allowlist]
+description = "Public Nostr pubkey in de-vendored historical portal bundles (not a credential)"
+regexes = [
+  '''dcce4729d4b134d5471a2c699dac1387fd769262ba8cbf183317''',
+]
