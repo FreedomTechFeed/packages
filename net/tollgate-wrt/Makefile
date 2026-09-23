@@ -96,7 +96,26 @@ PKG_NAME:=tollgate-wrt
 # board Devices page works on OpenWrt 25.x), and adds a cert-guarded
 # uhttpd.main.redirect_https so LuCI's http://:8080 stops warning about an
 # insecure password field. Module pin/hash unchanged.
-PKG_VERSION:=0.6.0_alpha2_pre13
+#
+# pre15 repins the module (below) to 42496214 — the MERGED MODULE MAIN TIP, 5
+# commits PAST the v0.6.0-alpha4 tag (the tag exists; no alpha4 *release* does)
+# — replacing the 170b4bd pin, and moves the portal pin WITH it:
+# vendor.lock.json -> portal_commit 51a1429, the revision THAT module commit
+# declares in packaging/build-inputs.json (.portal.commit), which carries the
+# CU110 captive-portal swap-fee pre-check fix. Module pin and vendored portal
+# SOURCE therefore describe one release instead of two; the bundle itself is
+# still built in CI from the lock (see below).
+#
+# Read `_pre15` honestly: the pin sits AFTER the v0.6.0-alpha4 tag, so this is a
+# post-tag MAIN-TIP build of the alpha4 line, not a build that precedes the tag.
+# The ordering the scheme needs still holds, and is why the base moved this
+# round (the feed's tag base has always equalled the module VERSION at the pin):
+#     0.6.0_alpha2_pre13 < 0.6.0_alpha4_pre15 < 0.6.0_alpha4
+# Consequence, stated rather than hidden: a device already running a published
+# `0.6.0_alpha4` build is NOT offered this package (only pre-train devices are),
+# by construction — the version string sorts below the tag even though these
+# bytes are newer than it.
+PKG_VERSION:=0.6.0_alpha4_pre15
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -109,13 +128,29 @@ PKG_VERSION:=0.6.0_alpha2_pre13
 # pre11 advances the pin to 170b4bd (module #449: the netifd wireless-status
 # Wi-Fi scan that replaces the uci-name iwinfo call; #458: captive-LAN access to
 # the admin board on :8090/:8443), replacing the 125f6a0 (#421) pin.
+# pre15 advances the pin to 42496214 — module main TIP (0 commits behind main;
+# 5 commits past the v0.6.0-alpha4 tag), replacing the 170b4bd (#449/#458) pin.
+# .portal.commit at this commit is 51a1429 — the portal pin vendor.lock.json now
+# carries. Compared with 170b4bd it adds the #513 nodogsplash / pre-auth :443 /
+# private-subnet work, #517's portal repin + shipped-bytes guard, and the CU110
+# swap-fee pre-check fix.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=170b4bd861836469f21ae9813233bae674b266f1
+PKG_SOURCE_VERSION:=42496214af449bf9937dd35d3deff45faebe4092
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
-PKG_SOURCE_TAG:=v0.6.0-alpha2
+# It MUST equal the repo-root VERSION file at PKG_SOURCE_VERSION — upstream's
+# own builds substitute exactly that value into 99-tollgate-setup's
+# __TOLLGATE_VERSION__ (packaging/Makefile: TOLLGATE_DISPLAY_VERSION) and the
+# feed's install recipe substitutes this variable for the same placeholder. The
+# 42496214 pin carries VERSION=v0.6.0-alpha4 (the 170b4bd pin carried
+# v0.6.0-alpha2; verified by extracting the pinned tarball's own VERSION), so
+# pre15 moves it with the pin. A stale tag is a live defect, not a mislabel: it
+# writes a setup marker no upstream build writes, and an unchanged marker sends
+# an upgrade down 99-tollgate-setup's same-version path where the new full-setup
+# work never runs.
+PKG_SOURCE_TAG:=v0.6.0-alpha4
 # Short SHA for that human-facing version string; the full SHA stays in
 # GitCommit, which is what a bug report should quote.
 PKG_SOURCE_SHA7:=$(shell printf '%s' $(PKG_SOURCE_VERSION) | cut -c1-7)
@@ -140,8 +175,15 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # which is what makes the method — and therefore the new hash below — trustworthy.
 # pre11 re-calibrated for the 170b4bd pin: the same construction
 # (codeload .../tar.gz/<sha>?) yields this tarball, sha256 == PKG_HASH below.
+# pre15 re-calibrated the same way for the 42496214 pin: replaying the identical
+# construction (curl -fsSL '<PKG_SOURCE_URL>$(PKG_SOURCE)', i.e. the '?' plus the
+# PKG_SOURCE suffix) for the OUTGOING pin (170b4bd) reproduced the previously
+# committed be7f40a6751420943ae1c547e2aafb74681dedf17839d0b4b6e3c9b4716125dd
+# exactly, so the identical construction for 42496214 yields
+# 4b44ee5fefaca57aea7c7acde57a75bad5c4bdb49f67c1fe1a663b4d14a5e119 — the value
+# committed below (see the PR body for the recorded command output).
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=be7f40a6751420943ae1c547e2aafb74681dedf17839d0b4b6e3c9b4716125dd
+PKG_HASH:=4b44ee5fefaca57aea7c7acde57a75bad5c4bdb49f67c1fe1a663b4d14a5e119
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
@@ -327,9 +369,9 @@ endef
 # The captive portal + admin SPAs are staged under this repo's files/ by the
 # CI build (scripts/build-portal-bundle.sh, build-in-CI rule #335), so the
 # install lines below consume what CI produced. They are NOT vendored/committed.
-# welcome.html is MODULE-owned (the portal repo's `npm run build` never emits
-# it), so it ships from the module source tarball -- byte-identical in both
-# repos today, and any future change originates upstream in the module.
+# There is no welcome.html install line any more: it used to be MODULE-owned and
+# shipped from the module source tarball, but the module deleted it at #517 and
+# the pre15 pin no longer carries it (see the install recipe below).
 define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/tollgate-module-basic-go $(1)/usr/bin/tollgate-wrt
@@ -379,10 +421,16 @@ define Package/tollgate-wrt/install
 
 	$(INSTALL_DIR) $(1)/etc/tollgate/tollgate-captive-portal-site
 	# The guest portal + admin SPAs are staged into files/ by scripts/build-portal-bundle.sh
-	# (build-in-CI rule #335) and consumed by the $(CP) below. welcome.html is MODULE-owned
-	# (the portal build never emits it) and comes from the source tarball.
+	# (build-in-CI rule #335) and consumed by the $(CP) below. Nothing else is installed
+	# here. This line used to install the module-owned welcome.html from the source
+	# tarball, but module #517 DELETED that file (it was stale drift sitting next to a
+	# regenerated bundle, and the pinned portal build never emitted it), so at pins >=
+	# 42496214 the tarball does not ship it and an $(INSTALL_DATA) on that path fails the
+	# package build outright. The pre-auth entry page is the portal's own splash.html,
+	# which 90-tollgate-captive-portal-symlink points nodogsplash at. Do NOT re-add the
+	# line and do NOT re-vendor a welcome.html copy: test-devendored.sh Gate D fails if
+	# either comes back.
 	$(CP) $(PKG_MAKEFILE_DIR)files/tollgate-captive-portal-site/. $(1)/etc/tollgate/tollgate-captive-portal-site/
-	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/tollgate-captive-portal-site/welcome.html $(1)/etc/tollgate/tollgate-captive-portal-site/
 
 	# Admin board (Preact SPA) served at the ROOT of the dedicated uhttpd
 	# instance on :8090, from its brand webroot (/www/tollgate, or

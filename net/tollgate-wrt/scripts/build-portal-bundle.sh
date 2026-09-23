@@ -28,8 +28,10 @@
 # No SDK step reaches a second repository, and no built asset is committed.
 #
 # welcome.html is deliberately NOT produced here: the portal build never emits
-# it; it is MODULE-owned and installed from the module source tarball by the
-# Makefile (see docs/architecture/portal-bundle-ownership.md).
+# it. Through pre13 it was MODULE-owned and installed from the module source
+# tarball by the Makefile; module #517 deleted it, so at the current pin nothing
+# installs it and this script must not stage one (see
+# docs/architecture/portal-bundle-ownership.md).
 #
 # Usage: build-portal-bundle.sh           # clone+build+stage+verify
 # Exit 0 on success, non-zero on any failure.
@@ -85,8 +87,8 @@ done
 for entry in "$WORK/portal/build/admin"/*; do
     cp -R "$entry" "$ADMIN_DIR/"
 done
-# welcome.html is module-only; never stage it (the Makefile installs it from the
-# module tarball).
+# welcome.html: never stage it. It is not a portal build output; the module used
+# to own it and deleted it at #517, so nothing installs it any more.
 
 PORTAL_N=$(find "$PORTAL_DIR" -type f | wc -l | tr -d ' ')
 ADMIN_N=$(find "$ADMIN_DIR" -type f | wc -l | tr -d ' ')
@@ -94,7 +96,7 @@ echo "build-portal-bundle: staged $PORTAL_N guest-portal + $ADMIN_N admin file(s
 
 # --- verify staged bytes against vendor.lock.json ---
 # The lock's "files" map is the authoritative manifest of what the pin produces
-# (guest-portal site minus welcome.html, plus admin, plus rpcd ACL). Recompute
+# (guest-portal site, plus admin, plus the rpcd ACL). Recompute
 # and diff. Any mismatch = the pin no longer produces the locked bundle.
 if python3 - <<'PY' "$LOCK" "$PORTAL_DIR" "$ADMIN_DIR" "$REPO_DIR"
 import hashlib, json, os, sys
