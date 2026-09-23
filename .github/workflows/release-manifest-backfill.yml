@@ -1,0 +1,159 @@
+name: Backfill SHA256SUMS on existing releases
+
+# Audit finding C3-05 follow-up: releases published BEFORE the manifest step
+# existed (v0.6.0-alpha1 … v0.6.0-alpha4-pre15) carry 8-14 assets and no
+# SHA256SUMS. This workflow generates, signs and attaches the manifest to those
+# releases from the assets GitHub already stores, so an installer pinned to an
+# older tag can verify too.
+#
+# This is explicitly a REPAIR path for already-published releases. New releases
+# must NOT depend on it: the manifest for a fresh tag is produced inside the
+# release job itself (release-publish.yml), because a follow-up run would leave
+# a window where the tag resolves for an installer while SHA256SUMS 404s.
+#
+# The per-leg work is deliberately the same code as the release job:
+#   .github/workflows/scripts/release-manifest.sh  (generate + verify + sign)
+# plus a fetch-back check over the PUBLIC release URL, which is the acceptance
+# criterion stated in the card.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: 'Release tags to backfill (space or comma separated). Empty = every published release that still has no SHA256SUMS.'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Generate + verify the manifest but do not attach it'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    name: Which releases need a manifest
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.plan.outputs.tags }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INPUT_TAGS: ${{ inputs.tags }}
+    steps:
+      - id: plan
+        run: |
+          set -euo pipefail
+          requested=$(printf '%s' "$INPUT_TAGS" | tr ',' ' ' | tr -s ' \t' '\n' | grep -v '^$' || true)
+          if [ -n "$requested" ]; then
+            candidates="$requested"
+          else
+            candidates=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+              --json tagName,isDraft --jq '.[] | select(.isDraft == false) | .tagName')
+          fi
+
+          need=()
+          while read -r tag; do
+            [ -n "$tag" ] || continue
+            case "$tag" in
+              v*) ;;
+              *) echo "::error::refusing to touch non-release tag '$tag'"; exit 1 ;;
+            esac
+            names=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+            if printf '%s\n' "$names" | grep -qx 'SHA256SUMS'; then
+              echo "skip $tag — SHA256SUMS already attached"
+              continue
+            fi
+            count=$(printf '%s\n' "$names" | grep -vc '^$' || true)
+            if [ "$count" -eq 0 ]; then
+              echo "skip $tag — release has no assets"
+              continue
+            fi
+            echo "plan $tag ($count assets)"
+            need+=("$tag")
+          done <<< "$candidates"
+
+          if [ "${#need[@]}" -eq 0 ]; then
+            matrix='[]'
+          else
+            matrix=$(printf '%s\n' "${need[@]}" \
+              | python3 -c 'import json,sys; print(json.dumps([{"tag": l.strip()} for l in sys.stdin if l.strip()]))')
+          fi
+          echo "tags=$matrix" >> "$GITHUB_OUTPUT"
+          echo "matrix: $matrix"
+
+  backfill:
+    name: Backfill ${{ matrix.tag }}
+    needs: plan
+    if: needs.plan.outputs.tags != '[]' && needs.plan.outputs.tags != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        tag: ${{ fromJSON(needs.plan.outputs.tags) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ matrix.tag }}
+      DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download the release's existing assets
+        run: |
+          set -euo pipefail
+          mkdir -p dl
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dl --clobber
+          # A previous partial/unsigned run may have left manifest files behind;
+          # they are regenerated, never trusted.
+          rm -f dl/SHA256SUMS dl/SHA256SUMS.sig
+          ls -lh dl/
+
+      - name: The download must be complete before we hash anything
+        run: |
+          set -euo pipefail
+          expected=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '[.assets[] | select(.name != "SHA256SUMS" and .name != "SHA256SUMS.sig")] | length')
+          actual=$(find dl -maxdepth 1 -type f | wc -l)
+          echo "release lists $expected assets; downloaded $actual"
+          [ "$expected" = "$actual" ] || {
+            echo "::error::asset count mismatch for $TAG — refusing to write a manifest over an incomplete download"
+            exit 1
+          }
+
+      - name: Generate, verify and sign SHA256SUMS
+        env:
+          FEED_SIGNING_KEY: ${{ secrets.FEED_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          # No expected-assets file: legacy releases differ in arch coverage
+          # (alpha1 has 8 assets, alpha2+ have 14). Every asset present is
+          # covered, and the count was pinned to the release's own list above.
+          bash .github/workflows/scripts/release-manifest.sh dl
+          echo "--- entries: $(grep -c . dl/SHA256SUMS)"
+
+      - name: Attach the manifest to the release
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            dl/SHA256SUMS dl/SHA256SUMS.sig
+
+      - name: Verify what the public URL serves (the acceptance check)
+        if: inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          mkdir -p verify && cd verify
+          curl -fsSL --retry 5 --retry-all-errors "$BASE/SHA256SUMS" -o SHA256SUMS
+          diff -u ../dl/SHA256SUMS SHA256SUMS
+          curl -fsSL --retry 5 --retry-all-errors "$BASE/SHA256SUMS.sig" -o SHA256SUMS.sig
+          ssh-keygen -Y verify -f ../.github/release-keys/allowed_signers \
+            -I release-signing@freedomtechfeed -n freedomtechfeed-release-manifest \
+            -s SHA256SUMS.sig < SHA256SUMS
+          while read -r _digest name; do
+            curl -fsSL --retry 5 --retry-all-errors "$BASE/$name" -o "$name"
+          done < SHA256SUMS
+          sha256sum --check --strict SHA256SUMS
+          echo "OK: $TAG manifest verified against the published bytes"
