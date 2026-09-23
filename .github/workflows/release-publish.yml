@@ -7,7 +7,7 @@ name: Publish per-arch tollgate-wrt release assets
 #   tollgate-wrt_<PKG_VERSION>_<arch>.apk
 #   tollgate-wrt_<PKG_VERSION>_<arch>.ipk
 #
-# e.g. tollgate-wrt_0.6.0_alpha4_pre15_aarch64_cortex-a53.apk
+# e.g. tollgate-wrt_0.6.0_alpha4_pre16_aarch64_cortex-a53.apk
 #
 # The wizard's tollgateArchAssets map (arch.go) points at these stable URLs,
 # so the correct binary is fetched for the detected router arch.

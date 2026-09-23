@@ -106,16 +106,32 @@ PKG_NAME:=tollgate-wrt
 # SOURCE therefore describe one release instead of two; the bundle itself is
 # still built in CI from the lock (see below).
 #
-# Read `_pre15` honestly: the pin sits AFTER the v0.6.0-alpha4 tag, so this is a
-# post-tag MAIN-TIP build of the alpha4 line, not a build that precedes the tag.
-# The ordering the scheme needs still holds, and is why the base moved this
-# round (the feed's tag base has always equalled the module VERSION at the pin):
-#     0.6.0_alpha2_pre13 < 0.6.0_alpha4_pre15 < 0.6.0_alpha4
+# pre16 advances the pin again (below) to a6eb12dc — module main TIP (0 commits
+# behind main; 10 commits past the v0.6.0-alpha4 tag), replacing the 42496214
+# pin — and moves the portal pin WITH it: vendor.lock.json -> portal_commit
+# e6fe0e0e, the revision THAT commit declares in
+# packaging/build-inputs.json (.portal.commit). Compared with 42496214 the
+# module pin brings #543 (portal repin to e6fe0e0e: renew an expired session
+# IN PAGE instead of the disconnect/reconnect dead end, + auto-select the access
+# option the pasted Cashu note came from), #544 (the tests/happy-path/ suite),
+# #545 (gate-close fail-open fix) and #542 (injectable lease-path seam in
+# src/main.go). PKG_SOURCE_TAG is UNCHANGED (v0.6.0-alpha4): the repo-root
+# VERSION file is still v0.6.0-alpha4 at a6eb12dc, so the base did not move —
+# only the commit inside it.
+#
+# Read `_pre16` honestly: like pre15, the pin sits AFTER the v0.6.0-alpha4 tag,
+# so this is a post-tag MAIN-TIP build of the alpha4 line, not a build that
+# precedes the tag. The ordering the scheme needs still holds, and is why the
+# base moved at pre15 (the feed's tag base has always equalled the module VERSION
+# at the pin):
+#     0.6.0_alpha2_pre13 < 0.6.0_alpha4_pre15 < 0.6.0_alpha4_pre16 < 0.6.0_alpha4
+# checked with the apk-tools 3 oracle (`apk version -c` legality, `apk version -t`
+# ordering) on openwrt/rootfs:x86_64-v25.12.4 — see the PR body for the output.
 # Consequence, stated rather than hidden: a device already running a published
 # `0.6.0_alpha4` build is NOT offered this package (only pre-train devices are),
 # by construction — the version string sorts below the tag even though these
 # bytes are newer than it.
-PKG_VERSION:=0.6.0_alpha4_pre15
+PKG_VERSION:=0.6.0_alpha4_pre16
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -134,9 +150,15 @@ PKG_VERSION:=0.6.0_alpha4_pre15
 # carries. Compared with 170b4bd it adds the #513 nodogsplash / pre-auth :443 /
 # private-subnet work, #517's portal repin + shipped-bytes guard, and the CU110
 # swap-fee pre-check fix.
+# pre16 advances the pin to a6eb12dc — module main TIP (0 commits behind main;
+# 10 commits past the v0.6.0-alpha4 tag), replacing the 42496214 pin.
+# .portal.commit at a6eb12dc is e6fe0e0e — the portal pin vendor.lock.json now
+# carries: #543's renewal-after-expiry (in-page, no reload dead end) plus the
+# mint auto-select from the pasted note. #544's tests/happy-path/ suite and
+# #545's gate-close fail-open fix ride the same pin.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=42496214af449bf9937dd35d3deff45faebe4092
+PKG_SOURCE_VERSION:=a6eb12dc7484add8d7c08d09ca5390359102fb30
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -144,9 +166,12 @@ PKG_SOURCE_VERSION:=42496214af449bf9937dd35d3deff45faebe4092
 # own builds substitute exactly that value into 99-tollgate-setup's
 # __TOLLGATE_VERSION__ (packaging/Makefile: TOLLGATE_DISPLAY_VERSION) and the
 # feed's install recipe substitutes this variable for the same placeholder. The
-# 42496214 pin carries VERSION=v0.6.0-alpha4 (the 170b4bd pin carried
-# v0.6.0-alpha2; verified by extracting the pinned tarball's own VERSION), so
-# pre15 moves it with the pin. A stale tag is a live defect, not a mislabel: it
+# a6eb12dc pin carries VERSION=v0.6.0-alpha4 — the SAME value the outgoing
+# 42496214 pin carried (the 170b4bd pin before it carried v0.6.0-alpha2), each
+# verified by extracting the pinned tarball's own VERSION
+# (`tar xzf <tarball> -O <dir>/VERSION`) rather than from memory — so pre16
+# leaves this variable UNCHANGED. Do not assume that is always so: it moved
+# alpha2 -> alpha4 at pre15. A stale tag is a live defect, not a mislabel: it
 # writes a setup marker no upstream build writes, and an unchanged marker sends
 # an upgrade down 99-tollgate-setup's same-version path where the new full-setup
 # work never runs.
@@ -179,11 +204,24 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # construction (curl -fsSL '<PKG_SOURCE_URL>$(PKG_SOURCE)', i.e. the '?' plus the
 # PKG_SOURCE suffix) for the OUTGOING pin (170b4bd) reproduced the previously
 # committed be7f40a6751420943ae1c547e2aafb74681dedf17839d0b4b6e3c9b4716125dd
-# exactly, so the identical construction for 42496214 yields
-# 4b44ee5fefaca57aea7c7acde57a75bad5c4bdb49f67c1fe1a663b4d14a5e119 — the value
-# committed below (see the PR body for the recorded command output).
+# exactly, so the identical construction for 42496214 yielded
+# 4b44ee5fefaca57aea7c7acde57a75bad5c4bdb49f67c1fe1a663b4d14a5e119 (the value
+# committed through pre15).
+# pre16 re-calibrated identically: the SAME construction for the OUTGOING pin
+# (42496214) reproduced that pin's committed
+# 4b44ee5fefaca57aea7c7acde57a75bad5c4bdb49f67c1fe1a663b4d14a5e119 exactly, so
+# the same construction for a6eb12dc yields
+# 1027c4f01e4aa755ec02b88eeb7405488776655d5c8e76237036b00a4451c955 — the value
+# committed below (see the PR body for the recorded command output). Replaying
+# the OUTGOING pin is the point: it proves the URL form and the hashing method,
+# which a fresh download hashing to *something* would not.
+# Note the Makefile carries exactly ONE PKG_SOURCE_URL form. The two plausible
+# variants were tried and rejected (command output in the PR body): the same URL
+# WITHOUT the '?' requests `.../tar.gz/<sha>/<name>` and 404s, and the tag form
+# `.../tar.gz/v0.6.0-alpha4?` resolves 200 but hashes DIFFERENTLY
+# (28d63edb…), i.e. it is not the commit tarball this pin builds from.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=4b44ee5fefaca57aea7c7acde57a75bad5c4bdb49f67c1fe1a663b4d14a5e119
+PKG_HASH:=1027c4f01e4aa755ec02b88eeb7405488776655d5c8e76237036b00a4451c955
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
@@ -371,7 +409,8 @@ endef
 # install lines below consume what CI produced. They are NOT vendored/committed.
 # There is no welcome.html install line any more: it used to be MODULE-owned and
 # shipped from the module source tarball, but the module deleted it at #517 and
-# the pre15 pin no longer carries it (see the install recipe below).
+# no pin since (pre15's 42496214, nor pre16's a6eb12dc) carries it — see the
+# install recipe below and test-devendored.sh Gate D.
 define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/tollgate-module-basic-go $(1)/usr/bin/tollgate-wrt
@@ -425,7 +464,7 @@ define Package/tollgate-wrt/install
 	# here. This line used to install the module-owned welcome.html from the source
 	# tarball, but module #517 DELETED that file (it was stale drift sitting next to a
 	# regenerated bundle, and the pinned portal build never emitted it), so at pins >=
-	# 42496214 the tarball does not ship it and an $(INSTALL_DATA) on that path fails the
+	# 42496214 (verified absent at a6eb12dc too) the tarball does not ship it and an $(INSTALL_DATA) on that path fails the
 	# package build outright. The pre-auth entry page is the portal's own splash.html,
 	# which 90-tollgate-captive-portal-symlink points nodogsplash at. Do NOT re-add the
 	# line and do NOT re-vendor a welcome.html copy: test-devendored.sh Gate D fails if

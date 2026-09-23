@@ -16,7 +16,8 @@
 #      disappears, so nothing would rebuild it at package time,
 #   C. the pin stops being an immutable full 40-char SHA (a branch/short ref is
 #      not reproducible),
-#   D. the module-owned welcome.html that the pre15 pin DELETED comes back --
+#   D. the module-owned welcome.html that module #517 deleted comes back (it has
+#      been absent since the pre15 pin; still absent at the pre16 pin a6eb12dc) --
 #      either as a $(PKG_TARBALL_DIR) install line (a guaranteed build break:
 #      the tarball no longer ships it) or as a re-vendored copy under files/
 #      (the pre10 second-hand-copy regression class).
@@ -89,7 +90,8 @@ fi
 # --- Gate D: the deleted module-owned welcome.html must stay deleted --------
 # Through pre13 the module owned packaging/files/tollgate-captive-portal-site/
 # welcome.html and the Makefile installed it FROM the module source tarball.
-# Module #517 DELETED that file, so at the pre15 pin (42496214) the tarball does
+# Module #517 DELETED that file, so at the pre15 pin (42496214) and the pre16 pin
+# (a6eb12dc) the tarball does
 # not ship it and $(INSTALL_DATA) on that path fails the package build outright.
 # This gate is therefore the INVERSE of the pre13 rule: it fails if the dead
 # install line or a re-vendored copy comes back. The pre-auth entry page is the
@@ -97,7 +99,7 @@ fi
 # nodogsplash at.
 DEAD_WELCOME=0
 if grep -q 'PKG_TARBALL_DIR)/packaging/files/tollgate-captive-portal-site/welcome.html' "$FEED/Makefile"; then
-    fail "Gate D: Makefile installs welcome.html from \$(PKG_TARBALL_DIR) again, but the pre15 pin does not ship it (guaranteed package-build failure)"
+    fail "Gate D: Makefile installs welcome.html from \$(PKG_TARBALL_DIR) again, but neither the pre15 (42496214) nor the pre16 (a6eb12dc) pin ships it (guaranteed package-build failure)"
     DEAD_WELCOME=1
 fi
 VENDORED_WELCOME=$(git -C "$ROOT" ls-files -- 'net/tollgate-wrt/files/*welcome.html' 2>/dev/null)

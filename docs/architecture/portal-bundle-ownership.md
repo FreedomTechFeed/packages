@@ -25,16 +25,17 @@ itself declares these are build output and must never be tracked.
 ## The single source of truth
 
 `net/tollgate-wrt/vendor.lock.json` pins **one** immutable portal commit (now
-the full 40-char SHA `51a1429bb3b5e3b41eb1001bfa612543ba1fcd1a`, the revision the
-pinned module commit `42496214` declares in its
+the full 40-char SHA `e6fe0e0e70f38ee5d9675fd1908efd261945e040`, the revision the
+pinned module commit `a6eb12dc` declares in its
 `packaging/build-inputs.json` → `.portal.commit`). It is the authoritative pin
 for exactly what the package ships: the guest portal SPA, the admin board, and
 the rpcd ACL. One release, not two — the module pin and the vendored portal pin
-always move together in one commit.
+always move together in one commit. (The outgoing pre15 pin was module
+`42496214` / portal `51a1429`; pre16 moves both.)
 
 `npm run build` at that pin (the portal repo's `scripts/build-all.mjs`) emits
 `build/` (React guest portal + balance page) and `build/admin/` (Preact admin
-board). For the pre15 pin the evidence is the builder's own byte-verification:
+board). For the pre16 pin the evidence is the builder's own byte-verification:
 `build-portal-bundle.sh` re-clones and rebuilds at the pin and the staged tree
 matches `vendor.lock.json` on all 27 entries
 (`verified staged file(s) against vendor.lock.json`, exit 0). That was reproduced
@@ -56,7 +57,7 @@ The earlier pre13 harness result is retained below for history:
 
 | feed dir | contents | WHY it must not be committed here |
 |---|---|---|
-| `files/tollgate-captive-portal-site/` | guest portal SPA (`splash.html` + hashed `assets/*.js\|css`, `asset-manifest.json`, `404.html`, `balance.html`, `favicon.ico`, `logo*.png`, `manifest.json`, `locales/en.json`) | **build output** — vite production build of the portal repo. `index-BDGoMmEt.js` (360,000 B) is minified JS with a content hash. The portal repo gitignores them; they exist only after `npm run build`. |
+| `files/tollgate-captive-portal-site/` | guest portal SPA (`splash.html` + hashed `assets/*.js\|css`, `asset-manifest.json`, `404.html`, `balance.html`, `favicon.ico`, `logo*.png`, `manifest.json`, `locales/en.json`) | **build output** — vite production build of the portal repo. The main bundle (`index-YkGiQMp2.js`, 361,920 B at the pre16 pin) is minified JS with a content hash. The portal repo gitignores them; they exist only after `npm run build`. |
 | `files/tollgate-admin/` | admin Preact board (`index.html`, `manifest.json`, `assets/*.js\|css`, `assets/brand/**`) | **build output** — `vite build --config admin/vite.config.mjs`. Same reasoning. |
 
 **Collapsed duplicate:** where a byte-identical built file appeared in both the
@@ -74,7 +75,7 @@ workspace as `/feed`, so the Makefile's `$(CP) $(PKG_MAKEFILE_DIR)files/...`
 install lines consume exactly what CI staged. No SDK step reaches a second
 repository (keeps the offline-build contract).
 
-### `welcome.html` — REMOVED at the pre15 pin
+### `welcome.html` — REMOVED at the pre15 pin (still absent at pre16)
 
 `welcome.html` was **never** produced by the portal build. Through pre13 the
 module owned it (`packaging/files/tollgate-captive-portal-site/welcome.html`)
@@ -90,7 +91,9 @@ So pre15 **drops the install line**: `$(INSTALL_DATA)` on a path the pin does no
 ship fails the package build outright (confirmed by
 `scripts/check-pkg-tarball-paths.sh`: `welcome.html` is the single MISSING path
 of 13 `$(PKG_TARBALL_DIR)` references at `42496214`, and resolves fine at
-`170b4bd`). The file must not be re-vendored into the feed either — that would be
+`170b4bd`). The pre16 pin `a6eb12dc` keeps it deleted: the same check reports
+**12 of 12 resolve, 0 missing** at that pin. The file must not be re-vendored into
+the feed either — that would be
 the same second-hand-copy class as the pre10 admin regression. Gate D below
 enforces both halves.
 
@@ -104,9 +107,9 @@ portal `main` — see "What the drift guard now does" below.
 
 | feed file | portal source | status |
 |---|---|---|
-| `files/uci-defaults/92-tollgate-admin-setup` | `packaging/files/etc/uci-defaults/92-tollgate-admin-setup` | **VENDORED SOURCE.** In sync with the pre15 pin `51a1429` (`ebe1332f…`, 8937 B) — and byte-identical at the OUTGOING pin `992cf7f1` too, so pre15 re-pinned this file without changing it. Ordering enforced: portal merges first, then the feed re-pins (pin bump + re-vendor from the SAME commit, atomic). |
-| `files/rpcd/tollgate` (exec sh) | `openwrt/rpcd/tollgate` | IN SYNC with the pre15 pin (`05852546…`); identical at both pins. VENDORED SOURCE. |
-| `files/rpcd/tollgate_acl.json` | `openwrt/rpcd/tollgate_acl.json` | IN SYNC with the pre15 pin (`14ffed79…`); identical at both pins. VENDORED SOURCE, and locked in `vendor.lock.json`. The builder SKIPS this entry (it is tracked source, not a build output), so it was proven separately against `raw.githubusercontent.com/.../51a1429/openwrt/rpcd/tollgate_acl.json`. |
+| `files/uci-defaults/92-tollgate-admin-setup` | `packaging/files/etc/uci-defaults/92-tollgate-admin-setup` | **VENDORED SOURCE.** In sync with the pre16 pin `e6fe0e0e` (`ebe1332f…`, 8937 B) — byte-identical at the OUTGOING pre15 pin `51a1429` too, so pre16 re-pinned this file without changing it (portal #60/#61 touched only `src/`, `public/` and tests; the portal's `packaging/` was untouched). Ordering enforced: portal merges first, then the feed re-pins (pin bump + re-vendor from the SAME commit, atomic). |
+| `files/rpcd/tollgate` (exec sh) | `openwrt/rpcd/tollgate` | IN SYNC with the pre16 pin (`05852546…`); identical at both pins (pre15 `51a1429` and pre16 `e6fe0e0e`). VENDORED SOURCE. |
+| `files/rpcd/tollgate_acl.json` | `openwrt/rpcd/tollgate_acl.json` | IN SYNC with the pre16 pin (`14ffed79…`); identical at both pins. VENDORED SOURCE, and locked in `vendor.lock.json`. The builder SKIPS this entry (it is tracked source, not a build output), so it was proven separately against the pin's own `openwrt/rpcd/tollgate_acl.json`. |
 
 ### Runtime files — OWNER: `OpenTollGate/tollgate-module-basic-go` (module, via tarball)
 
@@ -142,7 +145,7 @@ nftables.d, hotplug.d, usr/bin helpers, keep.d are installed from
    built bundle file is re-committed under `files/`; Gate B fails if the CI
    wiring (or its ngit lane) stops producing the bundle; Gate C fails if the pin
    drifts from a full immutable SHA; Gate D fails if the module-owned
-   `welcome.html` the pre15 pin deleted comes back — as a `$(PKG_TARBALL_DIR)`
+   `welcome.html` the pre15 pin deleted (and pre16 still does not ship) comes back — as a `$(PKG_TARBALL_DIR)`
    install line (a build break at this pin) or as a re-vendored copy under
    `files/`.
 
@@ -189,6 +192,56 @@ nftables.d, hotplug.d, usr/bin helpers, keep.d are installed from
   tarball (0 missing) once the dead `welcome.html` line is dropped. The same
   check is what exposed the break — `welcome.html` exists at `170b4bd` and is
   absent from `42496214`.
+- Not run here: the gh-action-sdk multi-arch build (needs an OpenWrt SDK); CI
+  runs it, and the CI bundle step is the same `build-portal-bundle.sh` verified
+  above.
+
+### pre16 re-pin (module `a6eb12dc`, portal `e6fe0e0e`) — run 2026-09-23
+
+- Run 1 of `build-portal-bundle.sh` (the lock's `files` map still the outgoing
+  pre15 pin's) staged 18 guest + 8 admin files and exited 1 with **14 DRIFT
+  lines** — expected: the lock was the old pin's manifest, and portal #60
+  (renew an expired session in page) + #61 (auto-select the note's access
+  option) changed the guest portal's JS and `locales/en.json`.
+- Re-locked the `files` map from the staged tree (old slot order preserved):
+  **27 entries, unchanged count**; 5 content-hashed asset names rotate →
+  `qr-scanner.min-DnbqbVsm.js`, `index-YkGiQMp2.js`, `portal-Cwphwxmb.js`,
+  `balance-CJspyFkd.js`, `browser-ponyfill-BcgRRBVG.js`; 4 same-name hash
+  rotations → `asset-manifest.json`, `balance.html`, `splash.html`,
+  `locales/en.json`. The **admin board is byte-identical** at both pins.
+- Run 2 (independent clone + build) printed
+  `build-portal-bundle: verified staged file(s) against vendor.lock.json` /
+  `OK (OpenTollGate/tollgate-captive-portal-site@e6fe0e0e70f38ee5d9675fd1908efd261945e040)`,
+  exit 0 — the re-lock reproduces, and re-deriving the map is idempotent.
+- Toolchain independence: the same build under node 22.17.0 / npm 10.9.2 (the
+  module's `packaging/build-inputs.json` pin, fetched and sha256-verified) and
+  under node 22.22.1 / npm 9.2.0 (host) both verified **27/27** against the
+  committed lock.
+- **Decisive check — the shipped bundle carries the fix its pin claims** (two
+  independent marker strings, `grep -rl` on the freshly staged tree):
+  `unsupported_mint_notice` and `session_expired_buy_more` (plus the renewal
+  copy `no need to disconnect`) are PRESENT in
+  `assets/index-YkGiQMp2.js` and `locales/en.json`, and the OUTGOING marker
+  `session_expired_reconnect` is GONE. On the pre15 staged tree the two new
+  markers are ABSENT and `session_expired_reconnect` is present — the check
+  discriminates the two pins instead of matching coincidentally.
+- Tracked sources: all three (`92-tollgate-admin-setup` `ebe1332f…` /
+  `rpcd/tollgate` `05852546…` / `rpcd/tollgate_acl.json` `14ffed79…`) are
+  **identical at BOTH pins** — this round re-pinned them without changing bytes,
+  so there was no byte change to re-vendor; say that rather than claiming a
+  re-vendor that changed nothing.
+- `sh net/tollgate-wrt/test-devendored.sh` → exit 0 (Gates A–E).
+- `sh net/tollgate-wrt/test-feed-ci.sh` → exit 0
+  (`PKG_VERSION=0.6.0_alpha4_pre16`).
+- `sh .github/scripts/check-vendor-drift.sh` → exit 0: `OK: vendored 92 + rpcd
+  (plugin, ACL) match OpenTollGate/tollgate-captive-portal-site@e6fe0e0e70f38ee5d9675fd1908efd261945e040`.
+- `scripts/check-pkg-tarball-paths.sh net/tollgate-wrt/Makefile <a6eb12dc tree>`
+  → `OK: all 12 $(PKG_TARBALL_DIR) reference(s) resolve inside the pin's
+  tarball` (0 missing; `welcome.html` stays deleted).
+- `apk version -c` / `apk version -t` on `openwrt/rootfs:x86_64-v25.12.4`:
+  `0.6.0_alpha4_pre16` is VALID, and
+  `0.6.0_alpha4_pre15 < 0.6.0_alpha4_pre16 < 0.6.0_alpha4` (and
+  `pre16 > pre15`, so the counter is not a no-op).
 - Not run here: the gh-action-sdk multi-arch build (needs an OpenWrt SDK); CI
   runs it, and the CI bundle step is the same `build-portal-bundle.sh` verified
   above.
