@@ -21,6 +21,27 @@ name: Publish per-arch tollgate-wrt release assets
 # artifact; a single publish job (needs: build) downloads them all and uploads
 # to the release. This avoids the race of several matrix jobs calling
 # softprops/action-gh-release concurrently.
+#
+# Release integrity (audit finding C3-05) — what the publish job guarantees:
+#   1. It publishes a SHA256SUMS manifest covering EVERY asset of the release,
+#      generated from the bytes it is about to upload (see
+#      .github/workflows/scripts/release-manifest.sh).
+#   2. It signs that manifest (SSHSIG, ed25519) with the key in the
+#      FEED_SIGNING_KEY secret, and fails if the key is absent — an unsigned
+#      manifest is refused. The public half is committed at
+#      .github/release-keys/release-signing.pub, so the digest is
+#      authenticated and no longer travels only with the bytes it describes.
+#   3. It fails if the staged asset set is not EXACTLY the expected set derived
+#      from .github/workflows/scripts/release-assets.py (same table that builds
+#      the matrix), and if the release already carries an unmanaged asset — a
+#      partially-published or hand-patched release cannot slip out unchecked.
+#   4. The release object stays a DRAFT until every package AND the manifest
+#      have been uploaded, then is published in one step. The ordering
+#      constraint behind C3-05 is therefore enforced: there is no window in
+#      which the tag resolves for an installer while SHA256SUMS 404s.
+#   5. After publishing, it re-downloads the manifest AND every asset from the
+#      public release URL and verifies the manifest against those bytes, so a
+#      green run is evidence about what the public URL actually serves.
 
 on:
   push:
@@ -32,27 +53,43 @@ permissions:
   contents: write
 
 jobs:
+  preflight:
+    name: Derive the expected asset set
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.assets.outputs.matrix }}
+      expected: ${{ steps.assets.outputs.expected }}
+      version: ${{ steps.assets.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Derive the build matrix and the expected asset names
+        id: assets
+        run: |
+          set -euo pipefail
+          VERSION=$(grep '^PKG_VERSION:=' net/tollgate-wrt/Makefile | sed 's/^PKG_VERSION:=//')
+          echo "PKG_VERSION=$VERSION"
+          MATRIX=$(python3 .github/workflows/scripts/release-assets.py matrix)
+          {
+            echo "matrix=$MATRIX"
+            echo "version=$VERSION"
+            echo "expected<<EXPECTED_ASSETS_EOF"
+            python3 .github/workflows/scripts/release-assets.py expected "$VERSION"
+            echo "EXPECTED_ASSETS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "--- expected assets"
+          python3 .github/workflows/scripts/release-assets.py expected "$VERSION"
+
   build:
     name: Build ${{ matrix.arch }} (${{ matrix.sdk }})
+    needs: preflight
     runs-on: ubuntu-latest
     strategy:
+      # fail-fast: false so one broken arch does not cancel the others; the
+      # publish job is gated on this job overall, so a failed arch still means
+      # NO release is published (and no partial manifest can be).
       fail-fast: false
-      matrix:
-        include:
-          - {arch: aarch64_cortex-a53, target: mediatek-filogic, sdk: master, ext: apk}
-          - {arch: aarch64_cortex-a53, target: mediatek-filogic, sdk: openwrt-24.10, ext: ipk}
-          - {arch: aarch64_cortex-a72, target: bcm27xx-bcm2711, sdk: master, ext: apk}
-          - {arch: aarch64_cortex-a72, target: bcm27xx-bcm2711, sdk: openwrt-24.10, ext: ipk}
-          - {arch: arm_cortex-a7, target: bcm27xx-bcm2709, sdk: master, ext: apk}
-          - {arch: arm_cortex-a7, target: bcm27xx-bcm2709, sdk: openwrt-24.10, ext: ipk}
-          - {arch: mipsel_24kc, target: mt7621, sdk: master, ext: apk}
-          - {arch: mipsel_24kc, target: mt7621, sdk: openwrt-24.10, ext: ipk}
-          - {arch: mips_24kc, target: ath79-generic, sdk: master, ext: apk}
-          - {arch: mips_24kc, target: ath79-generic, sdk: openwrt-24.10, ext: ipk}
-          - {arch: mips64_octeonplus, target: octeon-generic, sdk: master, ext: apk}
-          - {arch: mips64_octeonplus, target: octeon-generic, sdk: openwrt-24.10, ext: ipk}
-          - {arch: x86_64, target: x86-64, sdk: master, ext: apk}
-          - {arch: x86_64, target: x86-64, sdk: openwrt-24.10, ext: ipk}
+      matrix: ${{ fromJSON(needs.preflight.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@v7
@@ -107,10 +144,16 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish release assets
-    needs: build
+    name: Publish release assets + SHA256SUMS
+    needs: [preflight, build]
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      EXPECTED_ASSETS: ${{ needs.preflight.outputs.expected }}
     steps:
+      - uses: actions/checkout@v7
+
       - name: Download all per-arch assets
         uses: actions/download-artifact@v7
         with:
@@ -120,8 +163,81 @@ jobs:
       - name: List staged assets
         run: ls -lh assets/
 
-      - name: Upload to release
+      - name: Refuse to publish a release outside the expected asset set
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$EXPECTED_ASSETS" > expected-assets.txt
+          # An asset already attached to this release that the matrix does not
+          # know about cannot be covered by a regenerated manifest. Stop, so a
+          # hand-patched release is repaired deliberately rather than silently
+          # re-checksummed.
+          existing=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[].name' 2>/dev/null | grep -vE '^SHA256SUMS(\.sig)?$' || true)
+          if [ -n "$existing" ]; then
+            unexpected=$(comm -13 <(sort expected-assets.txt) <(printf '%s\n' "$existing" | sort) || true)
+            if [ -n "$unexpected" ]; then
+              echo "::error::release $TAG carries asset(s) outside the expected matrix:"
+              echo "$unexpected"
+              exit 1
+            fi
+          fi
+          echo "ok: no unmanaged assets on $TAG"
+
+      - name: Generate, verify and sign SHA256SUMS
+        env:
+          # OpenSSH ed25519 private key. Public half committed at
+          # .github/release-keys/release-signing.pub. Absent -> the script
+          # refuses to publish an unsigned manifest.
+          FEED_SIGNING_KEY: ${{ secrets.FEED_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          bash .github/workflows/scripts/release-manifest.sh assets expected-assets.txt
+          ls -l assets/SHA256SUMS assets/SHA256SUMS.sig
+
+      - name: Decide release visibility (draft until complete)
+        id: rel
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = "true" ]; then
+              echo "draft=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "draft=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::release $TAG already exists and is published — this is a repair run, so the release is visible while assets are replaced"
+            fi
+          else
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload assets + manifest to the release
         uses: softprops/action-gh-release@v2
         with:
+          # assets/* is expanded in sorted order, so the manifest files (which
+          # sort after "tollgate-wrt_*") are uploaded last: the manifest never
+          # exists before the bytes it describes.
           files: assets/*
           fail_on_unmatched_files: true
+          draft: ${{ steps.rel.outputs.draft == 'true' }}
+
+      - name: Publish the release (only once every asset + the manifest is attached)
+        if: steps.rel.outputs.draft == 'true'
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+      - name: Verify what the public URL serves (the acceptance check)
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          mkdir -p verify && cd verify
+          curl -fsSL --retry 5 --retry-all-errors "$BASE/SHA256SUMS" -o SHA256SUMS
+          diff -u ../assets/SHA256SUMS SHA256SUMS
+          curl -fsSL --retry 5 --retry-all-errors "$BASE/SHA256SUMS.sig" -o SHA256SUMS.sig
+          ssh-keygen -Y verify -f ../.github/release-keys/allowed_signers \
+            -I release-signing@freedomtechfeed -n freedomtechfeed-release-manifest \
+            -s SHA256SUMS.sig < SHA256SUMS
+          # Every listed asset, fetched from the public URL, must hash to its
+          # manifest entry — this is the command the audit asked for.
+          while read -r _digest name; do
+            curl -fsSL --retry 5 --retry-all-errors "$BASE/$name" -o "$name"
+          done < SHA256SUMS
+          sha256sum --check --strict SHA256SUMS
+          echo "published manifest verified against the published bytes for $TAG"
