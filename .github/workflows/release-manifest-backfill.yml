@@ -74,14 +74,17 @@ jobs:
             need+=("$tag")
           done <<< "$candidates"
 
+          # A named matrix axis must be a FLAT list of scalars: emitting
+          # [{"tag": ...}] here fails template validation with "A mapping was
+          # not expected", and the job name renders as "Backfill Object".
           if [ "${#need[@]}" -eq 0 ]; then
-            matrix='[]'
+            tags_json='[]'
           else
-            matrix=$(printf '%s\n' "${need[@]}" \
-              | python3 -c 'import json,sys; print(json.dumps([{"tag": l.strip()} for l in sys.stdin if l.strip()]))')
+            tags_json=$(printf '%s\n' "${need[@]}" \
+              | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
           fi
-          echo "tags=$matrix" >> "$GITHUB_OUTPUT"
-          echo "matrix: $matrix"
+          echo "tags=$tags_json" >> "$GITHUB_OUTPUT"
+          echo "tags: $tags_json"
 
   backfill:
     name: Backfill ${{ matrix.tag }}
