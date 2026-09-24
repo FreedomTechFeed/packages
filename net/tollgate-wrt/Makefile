@@ -498,8 +498,8 @@ define Package/tollgate-wrt/install
 	$(SED) 's|__TOLLGATE_VERSION__|$(PKG_SOURCE_TAG)|g' $(1)/etc/uci-defaults/99-tollgate-setup
 
 	$(INSTALL_DIR) $(1)/etc/nftables.d
-	# Stage the WHOLE module-owned etc/nftables.d/ directory, never a hand-kept
-	# list of filenames. pre16 listed 20-nds-enforce.nft and
+	# Stage the WHOLE module-owned etc/nftables.d/ directory by WILDCARD, never a
+	# hand-kept list of filenames. pre16 listed 20-nds-enforce.nft and
 	# 30-backend-firewall.nft explicitly, so when the module added
 	# 31-admin-board-not-guest-reachable.nft (#566, the :8090 admin board is
 	# unreachable from the guest network) the file existed in the source tarball
@@ -510,16 +510,26 @@ define Package/tollgate-wrt/install
 	# SHA256SUMS verified, because a hand-maintained install list has no way to
 	# notice a new upstream file.
 	#
-	# The glob is expanded by the shell AFTER Build/Prepare has populated
-	# $(PKG_TARBALL_DIR) (Make does not touch the *.nft part), so a future
-	# fragment ships without a recipe edit. A missing/empty directory makes the
-	# literal pattern fail to install and `|| exit 1` fails the build, so the
-	# recipe can never silently stage nothing. test-pkg-tarball-parity.sh Gate D
-	# is the mechanical half of that promise: it compares this directory as a SET
-	# against the tarball's own packaging/files/etc/nftables.d/, both directions.
-	for nft in $(PKG_TARBALL_DIR)/packaging/files/etc/nftables.d/*.nft; do \
-		$(INSTALL_DATA) "$$nft" $(1)/etc/nftables.d/ || exit 1; \
-	done
+	# The shell expands the glob when the recipe runs, i.e. AFTER Build/Prepare
+	# has populated $(PKG_TARBALL_DIR), so a future fragment ships without a
+	# recipe edit. If the directory ever goes missing/empty, install fails on the
+	# literal pattern and takes the package build down, so this line can never
+	# silently stage nothing.
+	#
+	# THIS FORM IS DELIBERATE — do not "improve" it into a shell for-loop.
+	# The OpenWrt package path expands this install define MORE THAN ONCE, so a
+	# shell variable written as $$name reaches the shell already partially eaten.
+	# Measured on 2026-09-25 in the multi-arch SDK build for mips64_octeonplus:
+	# a loop of the shape "for nft in .../*.nft ; do $(INSTALL_DATA) "$$nft" ...; done"
+	# ran as `install -m0644 "ft" …` — $$nft became $nft on the first expansion
+	# and then `$n` (empty) + `ft` on the next — and failed the build with
+	# `install: cannot stat 'ft': No such file or directory`. The repo's own
+	# convention for a loop in an install define is FOUR times the dollars
+	# ($$$$$$$${var}, see utils/collectd/Makefile), which is exactly the
+	# fragility a wildcard avoids: no shell variable, nothing to mis-expand.
+	# test-pkg-tarball-parity.sh Gate H fails if that loop shape comes back.
+	# Same shape as the man-page line below, which ships for every release.
+	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/etc/nftables.d/*.nft $(1)/etc/nftables.d/
 
 	$(INSTALL_DIR) $(1)/usr/share/man/man8
 	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/man/man8/*.8 $(1)/usr/share/man/man8/

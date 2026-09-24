@@ -355,11 +355,47 @@ feed's own enumeration was the whole bug. No `$(PKG_TARBALL_DIR)` reference was
 missing from the tarball (12/12 resolved, 0 missing; 11 after the rewrite, because
 two explicit nft lines became one glob).
 
-**The change.** The two explicit `nftables.d` install lines are replaced by a glob
-over the whole directory (`for nft in $(PKG_TARBALL_DIR)/packaging/files/etc/nftables.d/*.nft; do $(INSTALL_DATA) "$$nft" …; done`, with `|| exit 1` so an
-empty/missing directory fails the build rather than staging nothing). A future
-fragment needs no recipe edit. Nothing else in the recipe changed; no file was
+**The change.** The two explicit `nftables.d` install lines are replaced by ONE
+wildcard line over the whole directory — the same shape as the man-page line just
+below it:
+
+```make
+$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/etc/nftables.d/*.nft $(1)/etc/nftables.d/
+```
+
+A future fragment needs no recipe edit; if the directory ever goes missing or
+empty, `install` fails on the literal pattern and takes the build down, so the line
+cannot silently stage nothing. Nothing else in the recipe changed; no file was
 renamed; the portal bundle and its pin are untouched.
+
+**Why not a shell for-loop — measured, not theorised.** The first form of this fix
+was a loop:
+
+```make
+for nft in $(PKG_TARBALL_DIR)/…/etc/nftables.d/*.nft; do \
+	$(INSTALL_DATA) "$$nft" $(1)/etc/nftables.d/ || exit 1; \
+done
+```
+
+It passes every local check (a plain `make` harness runs it correctly) and **fails
+the real SDK build.** In the `multi-arch-test-build.yml` run for PR #27 the
+`mips64_octeonplus` job's log shows the executed command as
+
+```
+for nft in /builder/build_dir/…/packaging/files/etc/nftables.d/*.nft; do install -m0644 "ft" /builder/build_dir/…/tollgate-wrt/etc/nftables.d/ || exit 1; done
+install: cannot stat 'ft': No such file or directory
+make[2]: *** [Makefile:625: …/tollgate-wrt-0.6.0_alpha4_pre17-r1.apk] Error 1
+```
+
+`$$nft` had become `$nft` before the shell got it, and then `$n` (empty) + `ft`. The
+OpenWrt package path expands the install define **more than once** — this repo's own
+loop idiom is `$$$$$$$${var}`, four times the dollars (`utils/collectd/Makefile`),
+i.e. four collapses — and the count is path-dependent (ipk vs apk). That is exactly
+why the fix carries **no shell variable at all**: text with zero `$name` references
+is identical under any number of expansions. A local single-expansion harness would
+never have caught this, and neither would the parity test — so the parity test now
+has **Gate H**, which fails on `$$name` inside the install define (and deliberately
+does not fire on the legitimate four-dollar idiom).
 
 **The guard.** `net/tollgate-wrt/test-pkg-tarball-parity.sh` (both directions,
 `etc/nftables.d/` compared as an exact set with **no** exclusions):
@@ -370,12 +406,15 @@ renamed; the portal bundle and its pin are untouched.
 - Gate E — **extra direction**, whole tree: every `packaging/files/` file outside the one documented exclusion must be staged
 - Gate F — the exclusion is not a hole: every excluded file needs a `vendor.lock.json` counterpart
 - Gate G — the exclusion must never be widened over a guarded directory
+- Gate H — the install recipe carries no `$$name` shell-variable (the multiple-expansion trap above)
 
 **Negative controls (the guard was made to fail, both directions).**
 - RED on the committed pre16 tree, final test bytes: exit 1 —
   `FAIL: Gate D: 1 file(s) ship in the tarball's etc/nftables.d/ but are NOT staged by the install recipe (the pre16 defect)` / `NOT SHIPPED: etc/nftables.d/31-admin-board-not-guest-reachable.nft`, and the same line again via Gate E.
 - Gate C control: injecting the dead `welcome.html` install line (the module #517 break) into the same tree makes Gate C fail and names it — `Makefile:463  packaging/files/tollgate-captive-portal-site/welcome.html`.
-- GREEN after the recipe fix: `Gate D: etc/nftables.d/ parity exact both ways (3 file(s), 0 exclusions)`, `Gate E: every tarball packaging/files/ file outside 'tollgate-captive-portal-site/' is staged`, `test-pkg-tarball-parity: PASS` (exit 0).
+- Gate H control: the FIRST published form of this fix (commit `04e54509`, the shell loop) makes Gate H fail and names the line — `521: \t\t$(INSTALL_DATA) "$$nft" $(1)/etc/nftables.d/ || exit 1; \`.
+- GREEN after the wildcard rewrite: `Gate D: etc/nftables.d/ parity exact both ways (3 file(s), 0 exclusions)`, `Gate E: every tarball packaging/files/ file outside 'tollgate-captive-portal-site/' is staged`, `Gate H: no $$shell-variable use in the install recipe`, `test-pkg-tarball-parity: PASS` (exit 0).
+- The rewritten line staged all three fragments byte-identically under a plain-`make` run of the real recipe body (`31-*.nft` = `7655fe2b…`, mode 644, exactly what the old `INSTALL_DATA` lines produced for the other two).
 
 **Other feed gates re-run against pre17:** `test-devendored.sh` exit 0 (Gates A–E),
 `test-feed-ci.sh` exit 0 (`PKG_VERSION=0.6.0_alpha4_pre17`),

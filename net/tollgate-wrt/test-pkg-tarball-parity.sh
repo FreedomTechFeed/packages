@@ -45,6 +45,13 @@
 #   F. the exclusion is not a hole: every file under the excluded tree must have
 #      a feed-side counterpart in vendor.lock.json
 #   G. the exclusion must never be widened over a guarded directory
+#   H. the install recipe carries no $$shell-variable use: the OpenWrt package
+#      path expands the install define MORE THAN ONCE, so `$$name` reaches the
+#      shell already partially eaten. Measured 2026-09-25 in the multi-arch SDK
+#      build (mips64_octeonplus), where a for-loop staging the nftables
+#      fragments executed as `install -m0644 "ft"` — `$$nft` became `$nft` and
+#      then `$n` (empty) + `ft` — and failed the package build. The guarded
+#      directory is staged by wildcard instead, which needs no shell variable.
 #
 # THE ONE DOCUMENTED EXCLUSION: packaging/files/tollgate-captive-portal-site/.
 # The module ships a checked-in, ASSET-LESS copy of the guest portal (the vite
@@ -363,6 +370,27 @@ if grep -q "^$GUARD_PREFIX" "$SCRATCH/extra_excluded.txt" 2>/dev/null; then
     fail "Gate G: the exclusion '$EXCLUDE_PREFIX' now swallows $GUARD_PREFIX, which must never be excluded"
 else
     ok "Gate G: the exclusion '$EXCLUDE_PREFIX' does not cover the guarded '$GUARD_PREFIX'"
+fi
+
+# ---------------------------------------------------------------- Gate H ----
+# No shell variables in the install recipe. The OpenWrt package path expands this
+# define more than once, so `$$name` arrives at the shell already eaten (see the
+# header). Only the two-dollar form is flagged: the repo's legitimate loop idiom
+# uses four times the dollars ($$$$$$$${var}, utils/collectd/Makefile). Comment
+# lines are skipped, so the recipe may keep documenting the trap.
+awk '
+    /^define Package\/tollgate-wrt\/install$/ { inrec = 1; next }
+    inrec && /^endef$/ { exit }
+    !inrec { next }
+    /^[[:space:]]*#/ { next }
+    /\$\$[A-Za-z_]/ { printf "%d: %s\n", NR, $0 }
+' "$MK" > "$SCRATCH/shelldollar.txt"
+if [ -s "$SCRATCH/shelldollar.txt" ]; then
+    n=$(wc -l < "$SCRATCH/shelldollar.txt" | tr -d ' ')
+    fail "Gate H: $n install-recipe line(s) use a \$\$shell-variable, which the OpenWrt package path expands away before the shell sees it (stage by wildcard/plain path instead)"
+    sed 's/^/      /' "$SCRATCH/shelldollar.txt" >&2
+else
+    ok "Gate H: no \$\$shell-variable use in the install recipe"
 fi
 
 if [ "$FAIL" = 1 ]; then
