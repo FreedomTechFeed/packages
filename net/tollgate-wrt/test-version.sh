@@ -9,7 +9,7 @@
 # The CLI exposes the version through a cobra `version` subcommand (it has no
 # --version flag), so we accept either a --version probe or the subcommand.
 # The version string is injected via the feed's LDFLAGS as
-# cli.Version="$(PKG_SOURCE_TAG)-g$(short SHA)" (i.e. "v0.6.0-alpha4-g4249621";
+# cli.Version="$(PKG_SOURCE_TAG)-g$(short SHA)" (i.e. "v0.6.0-alpha4-g2796d96";
 # the feed pins a main-tip COMMIT, see net/tollgate-wrt/Makefile), so a bare
 # "0.6.0" always appears in the reported version either way.
 #
@@ -18,9 +18,9 @@
 BINARY="/usr/bin/tollgate"
 # Must track PKG_VERSION in net/tollgate-wrt/Makefile. Kept for the PASS/FAIL
 # message only — the assertion below deliberately matches on "0.6.0", because
-# the binary reports the SOURCE version ("v0.6.0-alpha4-g4249621"), which is
-# not the apk package version ("0.6.0_alpha4_pre15-r1").
-PKG_VERSION="0.6.0_alpha4_pre15"
+# the binary reports the SOURCE version ("v0.6.0-alpha4-g2796d96"), which is
+# not the apk package version ("0.6.0_alpha4_pre16-r1").
+PKG_VERSION="0.6.0_alpha4_pre16"
 
 if [ ! -x "$BINARY" ]; then
     echo "FAIL: $BINARY not found" >&2
