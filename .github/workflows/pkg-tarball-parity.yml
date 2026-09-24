@@ -1,0 +1,59 @@
+name: Module tarball parity guard
+
+# The feed installs the module's runtime files STRAIGHT OUT OF the pinned source
+# tarball ($(PKG_TARBALL_DIR)/packaging/files/…): the recipe and that tarball are
+# two halves of one contract, and until pre17 only one half was checked by hand.
+#
+# The pre16 defect this exists for: the recipe staged etc/nftables.d/ from an
+# explicit two-filename list, so when module #566 added
+# 31-admin-board-not-guest-reachable.nft the file was in the tarball and never in
+# the package. The published pre16 APK shipped two of the three fragments and :8090
+# stayed reachable from the guest network — with every feed gate green, because
+# nothing compared the two sets.
+#
+# net/tollgate-wrt/test-pkg-tarball-parity.sh compares them, in BOTH directions:
+#   * missing — a $(PKG_TARBALL_DIR) install reference that no longer resolves in
+#     the pinned tarball (a guaranteed package-build failure at that pin)
+#   * extra   — a tarball packaging/files/ file the recipe never stages (the pre16
+#     defect), with etc/nftables.d/ compared as an exact set and no exclusions
+# It also re-verifies PKG_HASH against the downloaded tarball and PKG_SOURCE_TAG
+# against the tarball's own VERSION, so a moved pin without a recalibrated hash or
+# with a stale tag fails here instead of in the SDK build.
+#
+# Runs on PRs and pushes that can move either half of the contract, plus nightly
+# (a codeload tarball for a pinned SHA is expected to be immutable; if that ever
+# stops being true, this is the job that notices).
+
+on:
+  push:
+    paths:
+      - 'net/tollgate-wrt/Makefile'
+      - 'net/tollgate-wrt/test-pkg-tarball-parity.sh'
+      - 'net/tollgate-wrt/vendor.lock.json'
+      - '.github/workflows/pkg-tarball-parity.yml'
+  pull_request:
+    paths:
+      - 'net/tollgate-wrt/Makefile'
+      - 'net/tollgate-wrt/test-pkg-tarball-parity.sh'
+      - 'net/tollgate-wrt/vendor.lock.json'
+      - '.github/workflows/pkg-tarball-parity.yml'
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pkg-tarball-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: staged files == pinned module tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare the staged set against the pinned tarball, both ways
+        run: sh net/tollgate-wrt/test-pkg-tarball-parity.sh

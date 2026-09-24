@@ -142,9 +142,16 @@ the SAME commit, atomic).
 
 ### Runtime files — OWNER: `OpenTollGate/tollgate-module-basic-go` (module, via tarball)
 
-Already correct in the active feed (FreedomTechFeed/packages): init.d, uci-99,
-nftables.d, hotplug.d, usr/bin helpers, keep.d are installed from
-`$(PKG_TARBALL_DIR)/packaging/files/…` — never vendored. No change needed.
+init.d, uci-99, nftables.d, hotplug.d, usr/bin helpers, keep.d are installed from
+`$(PKG_TARBALL_DIR)/packaging/files/…` — never vendored. **The mechanism was
+right but the pre16 recipe was wrong about one directory:** `etc/nftables.d/` was
+staged from an explicit two-filename list, so
+`31-admin-board-not-guest-reachable.nft` (module #566) sat in the tarball and
+never reached the package — see the pre17 section at the end of this document.
+`etc/nftables.d/` is now staged by **glob** (whole directory: stage the directory,
+never a list), and `net/tollgate-wrt/test-pkg-tarball-parity.sh` compares the
+staged set against the tarball's own `packaging/files/` tree in **both**
+directions. Do not "tidy" that back into a file list.
 
 ## What the drift guard now does (honest)
 
@@ -177,6 +184,12 @@ nftables.d, hotplug.d, usr/bin helpers, keep.d are installed from
    `welcome.html` the pre15 pin deleted (and pre16 still does not ship) comes back — as a `$(PKG_TARBALL_DIR)`
    install line (a build break at this pin) or as a re-vendored copy under
    `files/`.
+3. **Module-tarball parity is mechanically enforced** (pre17, after the pre16
+   defect below): `net/tollgate-wrt/test-pkg-tarball-parity.sh` fails if any
+   `$(PKG_TARBALL_DIR)` install reference stops resolving in the pinned tarball,
+   or if the tarball ships a `packaging/files/` file the recipe never stages —
+   with `etc/nftables.d/` compared as an exact set, no exclusions. It runs on
+   PR + push (`.github/workflows/pkg-tarball-parity.yml`) and locally.
 
 ## Test evidence (run 2026-09-22)
 
@@ -296,3 +309,120 @@ branch — no tag, no release — and is superseded in place, so there is one pr
 - Not run here: the gh-action-sdk multi-arch build (it needs an OpenWrt SDK); CI
   runs it, and the CI bundle step is the same `build-portal-bundle.sh` verified
   above.
+
+### pre17 — the install RECIPE was the defect (module `2796d96c`, portal `4c092e0`, version `0.6.0_alpha4_pre17`) — run 2026-09-25
+
+Pins did not move this round: module `2796d96c`, `.portal.commit`/`vendor.lock.json`
+`4c092e0`, `PKG_SOURCE_TAG` `v0.6.0-alpha4` and `PKG_HASH` are all the pre16 values,
+and the locked bundle map is untouched. The fix is entirely in the feed's install
+recipe, and it is the reason the pins did not need to move.
+
+**The defect, measured on the published artifact (not read from the recipe).**
+`apk extract` of the published
+`tollgate-wrt_0.6.0_alpha4_pre16_aarch64_cortex-a53.apk` (8,361,504 B, sha256
+verified against the release `SHA256SUMS`) shows `/etc/nftables.d/` holding exactly
+`20-nds-enforce.nft` and `30-backend-firewall.nft`; `apk manifest` agrees — 87
+entries, 2 of them under `etc/nftables.d/`. On the bench MT3000 the directory also
+carried `10-custom-filter-chains.nft` and `README`, both owned by the **nodogsplash**
+package, not by us. `31-admin-board-not-guest-reachable.nft` — module #566, merged,
+the fragment that makes the `:8090` admin board unreachable from the guest network —
+was simply never in the package, so `:8090` answered HTTP 200 from a br-lan (guest)
+client. `release-publish.yml` was green: it reports on the asset set, not on a
+file list.
+
+**The audit (pin `2796d96c`, tarball `packaging/files/` = 62 files).** Every
+`$(PKG_TARBALL_DIR)` reference in `Package/tollgate-wrt/install` was resolved
+against the extracted tarball and compared, as a set, with the tarball's own tree:
+
+| dir | module files | staged at pre16 | staged at pre17 | mechanism |
+|---|---|---|---|---|
+| `etc/nftables.d/` | 3 | **2** | 3 | `$(PKG_TARBALL_DIR)` **glob** (was an explicit 2-filename list) |
+| `man/man8/` | 41 | 41 | 41 | `$(PKG_TARBALL_DIR)` glob `*.8` |
+| `etc/init.d/` | 1 | 1 | 1 | explicit `$(INSTALL_BIN)` |
+| `etc/uci-defaults/` | 2 | 2 | 2 | explicit + `$(SED)` version/brand substitution |
+| `etc/hotplug.d/iface/` | 1 | 1 | 1 | explicit |
+| `usr/bin/` | 3 | 3 | 3 | explicit |
+| `usr/local/bin/` | 1 | 1 | 1 | explicit |
+| `lib/upgrade/keep.d/` | 1 | 1 | 1 | explicit |
+| `tollgate-captive-portal-site/` | 9 | 0 | 0 | **deliberate**: the guest portal is built in CI from `vendor.lock.json` → `portal_commit`; the module's copy is asset-less and would be a second, older portal (the pre10 admin-regression class) |
+| **total** | **62** | **52** | **53** | |
+
+So the complete set of module files the pre16 package did not ship was exactly two
+groups: the one real miss (`etc/nftables.d/31-admin-board-not-guest-reachable.nft`)
+and the nine-file portal duplicate that is excluded by design. **The module tarball
+already carried the guard file, which is why no module change was required** — the
+feed's own enumeration was the whole bug. No `$(PKG_TARBALL_DIR)` reference was
+missing from the tarball (12/12 resolved, 0 missing; 11 after the rewrite, because
+two explicit nft lines became one glob).
+
+**The change.** The two explicit `nftables.d` install lines are replaced by ONE
+wildcard line over the whole directory — the same shape as the man-page line just
+below it:
+
+```make
+$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/etc/nftables.d/*.nft $(1)/etc/nftables.d/
+```
+
+A future fragment needs no recipe edit; if the directory ever goes missing or
+empty, `install` fails on the literal pattern and takes the build down, so the line
+cannot silently stage nothing. Nothing else in the recipe changed; no file was
+renamed; the portal bundle and its pin are untouched.
+
+**Why not a shell for-loop — measured, not theorised.** The first form of this fix
+was a loop:
+
+```make
+for nft in $(PKG_TARBALL_DIR)/…/etc/nftables.d/*.nft; do \
+	$(INSTALL_DATA) "$$nft" $(1)/etc/nftables.d/ || exit 1; \
+done
+```
+
+It passes every local check (a plain `make` harness runs it correctly) and **fails
+the real SDK build.** In the `multi-arch-test-build.yml` run for PR #27 the
+`mips64_octeonplus` job's log shows the executed command as
+
+```
+for nft in /builder/build_dir/…/packaging/files/etc/nftables.d/*.nft; do install -m0644 "ft" /builder/build_dir/…/tollgate-wrt/etc/nftables.d/ || exit 1; done
+install: cannot stat 'ft': No such file or directory
+make[2]: *** [Makefile:625: …/tollgate-wrt-0.6.0_alpha4_pre17-r1.apk] Error 1
+```
+
+`$$nft` had become `$nft` before the shell got it, and then `$n` (empty) + `ft`. The
+OpenWrt package path expands the install define **more than once** — this repo's own
+loop idiom is `$$$$$$$${var}`, four times the dollars (`utils/collectd/Makefile`),
+i.e. four collapses — and the count is path-dependent (ipk vs apk). That is exactly
+why the fix carries **no shell variable at all**: text with zero `$name` references
+is identical under any number of expansions. A local single-expansion harness would
+never have caught this, and neither would the parity test — so the parity test now
+has **Gate H**, which fails on `$$name` inside the install define (and deliberately
+does not fire on the legitimate four-dollar idiom).
+
+**The guard.** `net/tollgate-wrt/test-pkg-tarball-parity.sh` (both directions,
+`etc/nftables.d/` compared as an exact set with **no** exclusions):
+- Gate A — the tarball's sha256 == `PKG_HASH`, and it extracts
+- Gate B — the tarball's own `VERSION` == `PKG_SOURCE_TAG` (the Makefile's documented invariant, now checked mechanically on every run instead of by hand)
+- Gate C — **missing direction**: every `$(PKG_TARBALL_DIR)` install reference resolves inside the tarball
+- Gate D — **extra direction**, `etc/nftables.d/`: exact set equality, no exclusions
+- Gate E — **extra direction**, whole tree: every `packaging/files/` file outside the one documented exclusion must be staged
+- Gate F — the exclusion is not a hole: every excluded file needs a `vendor.lock.json` counterpart
+- Gate G — the exclusion must never be widened over a guarded directory
+- Gate H — the install recipe carries no `$$name` shell-variable (the multiple-expansion trap above)
+
+**Negative controls (the guard was made to fail, both directions).**
+- RED on the committed pre16 tree, final test bytes: exit 1 —
+  `FAIL: Gate D: 1 file(s) ship in the tarball's etc/nftables.d/ but are NOT staged by the install recipe (the pre16 defect)` / `NOT SHIPPED: etc/nftables.d/31-admin-board-not-guest-reachable.nft`, and the same line again via Gate E.
+- Gate C control: injecting the dead `welcome.html` install line (the module #517 break) into the same tree makes Gate C fail and names it — `Makefile:463  packaging/files/tollgate-captive-portal-site/welcome.html`.
+- Gate H control: the FIRST published form of this fix (commit `04e54509`, the shell loop) makes Gate H fail and names the line — `521: \t\t$(INSTALL_DATA) "$$nft" $(1)/etc/nftables.d/ || exit 1; \`.
+- GREEN after the wildcard rewrite: `Gate D: etc/nftables.d/ parity exact both ways (3 file(s), 0 exclusions)`, `Gate E: every tarball packaging/files/ file outside 'tollgate-captive-portal-site/' is staged`, `Gate H: no $$shell-variable use in the install recipe`, `test-pkg-tarball-parity: PASS` (exit 0).
+- The rewritten line staged all three fragments byte-identically under a plain-`make` run of the real recipe body (`31-*.nft` = `7655fe2b…`, mode 644, exactly what the old `INSTALL_DATA` lines produced for the other two).
+
+**Other feed gates re-run against pre17:** `test-devendored.sh` exit 0 (Gates A–E),
+`test-feed-ci.sh` exit 0 (`PKG_VERSION=0.6.0_alpha4_pre17`),
+`sh -n` on the modified scripts. `test-version.sh` was bumped to track
+`PKG_VERSION=0.6.0_alpha4_pre17` (the assertion still matches `0.6.0`, because the
+binary reports the SOURCE version `v0.6.0-alpha4-g2796d96`).
+
+**Not run here:** the gh-action-sdk multi-arch build — CI runs it
+(`multi-arch-test-build.yml` for `aarch64_cortex-a53` and `x86_64`), and the
+published-release check below is the same `apk manifest`/`apk extract` pair used on
+the pre16 artifact above.

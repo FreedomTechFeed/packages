@@ -123,6 +123,24 @@ PKG_NAME:=tollgate-wrt
 # VERSION file is still v0.6.0-alpha4 at 2796d96c, so the base did not move —
 # only the commit inside it.
 #
+# pre17 fixes the install RECIPE, not the pins, and the audit is what decides
+# that: the file the package was missing
+# (packaging/files/etc/nftables.d/31-admin-board-not-guest-reachable.nft, added
+# by module #566) is ALREADY in the pre16 tarball at 2796d96c, so no module
+# change is required. Module pin, PKG_SOURCE_TAG, the portal lock and PKG_HASH
+# are therefore all UNCHANGED from pre16 — PKG_HASH is never recomputed without
+# a pin move. Through pre16 the recipe staged etc/nftables.d/ from an explicit
+# two-filename list, so that third fragment shipped upstream and never reached
+# the package: the published pre16 APK's /etc/nftables.d/ held only
+# 20-nds-enforce.nft and 30-backend-firewall.nft (plus the nodogsplash
+# 10-custom-filter-chains.nft and README), and :8090 answered HTTP 200 from a
+# br-lan (guest) client on the bench MT3000 — the exact thing #566 was merged to
+# prevent, with a green release-publish run saying nothing about it. The recipe
+# now stages the WHOLE directory by glob (see the install recipe), and
+# net/tollgate-wrt/test-pkg-tarball-parity.sh is the both-directions guard that
+# compares the staged set against the tarball's own packaging/files/ tree, so a
+# future fragment (or a vanished one) fails a test instead of silently shipping.
+#
 # THE LOCK'S PORTAL PIN MOVES ONE COMMIT AHEAD OF THE MODULE'S DECLARED ONE, and
 # that is deliberate, not an oversight. vendor.lock.json -> portal_commit
 # 4c092e0 carries portal #62 (an empty root password is root administration —
@@ -139,19 +157,19 @@ PKG_NAME:=tollgate-wrt
 # a known divergence so nobody "fixes" the lock back: for this pre-release the
 # club artifact deliberately carries BOTH halves of the admin-credential fix.
 #
-# Read `_pre16` honestly: like pre15, the pin sits AFTER the v0.6.0-alpha4 tag,
-# so this is a post-tag MAIN-TIP build of the alpha4 line, not a build that
-# precedes the tag. The ordering the scheme needs still holds, and is why the
-# base moved at pre15 (the feed's tag base has always equalled the module VERSION
-# at the pin):
-#     0.6.0_alpha2_pre13 < 0.6.0_alpha4_pre15 < 0.6.0_alpha4_pre16 < 0.6.0_alpha4
+# Read `_pre16`/`_pre17` honestly: like pre15, the pin sits AFTER the
+# v0.6.0-alpha4 tag, so this is a post-tag MAIN-TIP build of the alpha4 line,
+# not a build that precedes the tag. The ordering the scheme needs still holds,
+# and is why the base moved at pre15 (the feed's tag base has always equalled
+# the module VERSION at the pin):
+#     0.6.0_alpha2_pre13 < 0.6.0_alpha4_pre15 < 0.6.0_alpha4_pre16 < 0.6.0_alpha4_pre17 < 0.6.0_alpha4
 # checked with the apk-tools 3 oracle (`apk version -c` legality, `apk version -t`
 # ordering) on openwrt/rootfs:x86_64-v25.12.4 — see the PR body for the output.
 # Consequence, stated rather than hidden: a device already running a published
 # `0.6.0_alpha4` build is NOT offered this package (only pre-train devices are),
 # by construction — the version string sorts below the tag even though these
 # bytes are newer than it.
-PKG_VERSION:=0.6.0_alpha4_pre16
+PKG_VERSION:=0.6.0_alpha4_pre17
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -177,6 +195,10 @@ PKG_VERSION:=0.6.0_alpha4_pre16
 # admin credential fix), because the FEED — not the module tarball — ships the
 # rpcd plugin, the rpcd ACL, 92-tollgate-admin-setup and the built admin SPA.
 # See the pre16 block above for the full reasoning.
+# pre17 leaves this pin, PKG_SOURCE_TAG, the portal lock and PKG_HASH UNCHANGED
+# from pre16, deliberately: the audit showed the missing nftables fragment is
+# already in the 2796d96c tarball, so a module change would be unnecessary churn
+# on a community feed (see the pre17 block above).
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
 PKG_SOURCE_VERSION:=2796d96c89363ce96a41c22d8f2180ccb948487c
@@ -191,7 +213,10 @@ PKG_SOURCE_VERSION:=2796d96c89363ce96a41c22d8f2180ccb948487c
 # 42496214 pin carried (the 170b4bd pin before it carried v0.6.0-alpha2), each
 # verified by extracting the pinned tarball's own VERSION
 # (`tar xzf <tarball> -O <dir>/VERSION`) rather than from memory — so pre16
-# leaves this variable UNCHANGED. Do not assume that is always so: it moved
+# leaves this variable UNCHANGED, and pre17 re-verified it the same way against
+# the SAME pin (test-pkg-tarball-parity.sh Gate B now does that check on every
+# run, so it can no longer be a thing someone remembers to do by hand).
+# Do not assume that is always so: it moved
 # alpha2 -> alpha4 at pre15. A stale tag is a live defect, not a mislabel: it
 # writes a setup marker no upstream build writes, and an unchanged marker sends
 # an upgrade down 99-tollgate-setup's same-version path where the new full-setup
@@ -236,6 +261,12 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # committed below (see the PR body for the recorded command output). Replaying
 # the OUTGOING pin is the point: it proves the URL form and the hashing method,
 # which a fresh download hashing to *something* would not.
+# pre17 does NOT recalibrate: the pin did not move, so the hash cannot change
+# (recomputing it would be a no-op dressed up as verification). It was re-derived
+# anyway as a control — re-downloading 2796d96c with the construction above
+# reproduces 132ebf00… — and test-pkg-tarball-parity.sh Gate A now compares the
+# tarball's sha256 against this variable on every run, so a future pin bump that
+# forgets to recalibrate fails a test instead of failing the SDK download.
 # Note the Makefile carries exactly ONE PKG_SOURCE_URL form. The two plausible
 # variants were tried and rejected (command output in the PR body): the same URL
 # WITHOUT the '?' requests `.../tar.gz/<sha>/<name>` and 404s, and the tag form
@@ -430,8 +461,15 @@ endef
 # install lines below consume what CI produced. They are NOT vendored/committed.
 # There is no welcome.html install line any more: it used to be MODULE-owned and
 # shipped from the module source tarball, but the module deleted it at #517 and
-# no pin since (pre15's 42496214, nor pre16's 2796d96c) carries it — see the
-# install recipe below and test-devendored.sh Gate D.
+# no pin since (pre15's 42496214, nor pre16's / pre17's 2796d96c) carries it —
+# see the install recipe below and test-devendored.sh Gate D.
+#
+# One runtime directory is NOT a hand-kept list: etc/nftables.d/ is staged by
+# glob so a module-side fragment cannot be forgotten (pre17 fix — see the
+# recipe line and test-pkg-tarball-parity.sh). Every other path here is an
+# explicit file, and test-pkg-tarball-parity.sh Gates C/E fail if any of them
+# stops resolving in the pinned tarball or if the tarball grows a file outside
+# the one documented exclusion (the CI-built portal bundle's tree).
 define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/tollgate-module-basic-go $(1)/usr/bin/tollgate-wrt
@@ -460,8 +498,38 @@ define Package/tollgate-wrt/install
 	$(SED) 's|__TOLLGATE_VERSION__|$(PKG_SOURCE_TAG)|g' $(1)/etc/uci-defaults/99-tollgate-setup
 
 	$(INSTALL_DIR) $(1)/etc/nftables.d
-	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/etc/nftables.d/20-nds-enforce.nft $(1)/etc/nftables.d/
-	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/etc/nftables.d/30-backend-firewall.nft $(1)/etc/nftables.d/
+	# Stage the WHOLE module-owned etc/nftables.d/ directory by WILDCARD, never a
+	# hand-kept list of filenames. pre16 listed 20-nds-enforce.nft and
+	# 30-backend-firewall.nft explicitly, so when the module added
+	# 31-admin-board-not-guest-reachable.nft (#566, the :8090 admin board is
+	# unreachable from the guest network) the file existed in the source tarball
+	# and was simply never staged: the published pre16 package shipped two of
+	# the three fragments, and on the bench MT3000 :8090 still answered HTTP 200
+	# from a br-lan (guest) client — the exact thing #566 was merged to prevent.
+	# Nothing failed: the package built, release-publish went green and
+	# SHA256SUMS verified, because a hand-maintained install list has no way to
+	# notice a new upstream file.
+	#
+	# The shell expands the glob when the recipe runs, i.e. AFTER Build/Prepare
+	# has populated $(PKG_TARBALL_DIR), so a future fragment ships without a
+	# recipe edit. If the directory ever goes missing/empty, install fails on the
+	# literal pattern and takes the package build down, so this line can never
+	# silently stage nothing.
+	#
+	# THIS FORM IS DELIBERATE — do not "improve" it into a shell for-loop.
+	# The OpenWrt package path expands this install define MORE THAN ONCE, so a
+	# shell variable written as $$name reaches the shell already partially eaten.
+	# Measured on 2026-09-25 in the multi-arch SDK build for mips64_octeonplus:
+	# a loop of the shape "for nft in .../*.nft ; do $(INSTALL_DATA) "$$nft" ...; done"
+	# ran as `install -m0644 "ft" …` — $$nft became $nft on the first expansion
+	# and then `$n` (empty) + `ft` on the next — and failed the build with
+	# `install: cannot stat 'ft': No such file or directory`. The repo's own
+	# convention for a loop in an install define is FOUR times the dollars
+	# ($$$$$$$${var}, see utils/collectd/Makefile), which is exactly the
+	# fragility a wildcard avoids: no shell variable, nothing to mis-expand.
+	# test-pkg-tarball-parity.sh Gate H fails if that loop shape comes back.
+	# Same shape as the man-page line below, which ships for every release.
+	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/etc/nftables.d/*.nft $(1)/etc/nftables.d/
 
 	$(INSTALL_DIR) $(1)/usr/share/man/man8
 	$(INSTALL_DATA) $(PKG_TARBALL_DIR)/packaging/files/man/man8/*.8 $(1)/usr/share/man/man8/

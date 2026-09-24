@@ -19,8 +19,8 @@ BINARY="/usr/bin/tollgate"
 # Must track PKG_VERSION in net/tollgate-wrt/Makefile. Kept for the PASS/FAIL
 # message only — the assertion below deliberately matches on "0.6.0", because
 # the binary reports the SOURCE version ("v0.6.0-alpha4-g2796d96"), which is
-# not the apk package version ("0.6.0_alpha4_pre16-r1").
-PKG_VERSION="0.6.0_alpha4_pre16"
+# not the apk package version ("0.6.0_alpha4_pre17-r1").
+PKG_VERSION="0.6.0_alpha4_pre17"
 
 if [ ! -x "$BINARY" ]; then
     echo "FAIL: $BINARY not found" >&2
