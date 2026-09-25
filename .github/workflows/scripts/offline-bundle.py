@@ -160,7 +160,13 @@ def download(url, dest, expect_sha256=None):
                      "--retry-delay", "3", "--connect-timeout", "30", "-o", tmp, url],
                     capture_output=True, text=True)
                 if proc.returncode != 0:
-                    raise Fail("curl exit %d: %s" % (proc.returncode, proc.stderr.strip()))
+                    stderr = (proc.stderr or "").strip()
+                    # 404 is a hard answer for a release object (a feed that does
+                    # not exist for this release/target, or a wrong target path).
+                    # Retrying it only delays the fail-closed path.
+                    if proc.returncode == 22 and " 404" in stderr:
+                        raise Fail("not found (404): %s" % url)
+                    raise Fail("curl exit %d: %s" % (proc.returncode, stderr))
                 with open(tmp, "rb") as fh:
                     for chunk in iter(lambda: fh.read(1 << 20), b""):
                         digest.update(chunk)
@@ -174,6 +180,8 @@ def download(url, dest, expect_sha256=None):
                         out.write(chunk)
             break
         except (Fail, urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
+            if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
+                raise Fail("not found (404): %s" % url)
             last = str(exc)
             warn("download attempt %d/%d failed for %s: %s" % (attempt, attempts, url, exc))
             if attempt == attempts:

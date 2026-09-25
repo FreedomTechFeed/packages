@@ -10,12 +10,20 @@ name: Release integrity tooling
 # carries an unmanaged asset, when an asset is empty, or when the signing key
 # is not configured — see .github/workflows/scripts/release-manifest-test.sh,
 # which records the RED (guards removed) and GREEN runs in its header.
+#
+# offline-bundle-test.sh guards the other half of the release job: the per-arch
+# WAN-less install bundle. It resolves a fixture dependency closure (fail closed
+# on a missing dependency, never stub a runtime dependency), verifies the
+# bundle's MANIFEST, and asserts that release-publish.yml builds the bundle
+# BEFORE it signs SHA256SUMS — including against a mutated copy of the workflow,
+# so the ordering assertion cannot pass vacuously.
 
 on:
   pull_request:
     paths:
       - '.github/workflows/release-*.yml'
       - '.github/workflows/scripts/release-*'
+      - '.github/workflows/scripts/offline-*'
       - '.github/release-keys/**'
   push:
     branches:
@@ -23,6 +31,7 @@ on:
     paths:
       - '.github/workflows/release-*.yml'
       - '.github/workflows/scripts/release-*'
+      - '.github/workflows/scripts/offline-*'
       - '.github/release-keys/**'
   workflow_dispatch:
 
@@ -39,6 +48,9 @@ jobs:
       - name: Manifest tooling self-test (generate, verify, sign, refuse)
         run: bash .github/workflows/scripts/release-manifest-test.sh
 
+      - name: Offline bundle self-test (closure, manifest, release ordering)
+        run: bash .github/workflows/scripts/offline-bundle-test.sh
+
       - name: Committed key material is self-consistent
         run: |
           set -euo pipefail
@@ -49,15 +61,24 @@ jobs:
             exit 1
           }
 
-      - name: Expected asset set is derivable and matches the matrix
+      - name: Expected asset sets are derivable and match their matrices
         run: |
           set -euo pipefail
           version=$(grep '^PKG_VERSION:=' net/tollgate-wrt/Makefile | sed 's/^PKG_VERSION:=//')
-          matrix=$(python3 .github/workflows/scripts/release-assets.py matrix)
-          expected=$(python3 .github/workflows/scripts/release-assets.py expected "$version" | wc -l)
-          matrix_count=$(printf '%s' "$matrix" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["include"]))')
-          echo "matrix entries=$matrix_count expected assets=$expected"
-          [ "$matrix_count" = "$expected" ] || {
-            echo "::error::the build matrix and the expected asset list disagree"
-            exit 1
-          }
+          for kind in "" "offline"; do
+            if [ -z "$kind" ]; then
+              matrix_cmd=matrix; expected_cmd=expected-packages; label=package
+            else
+              matrix_cmd=offline-matrix; expected_cmd=expected-offline; label=offline-bundle
+            fi
+            matrix=$(python3 .github/workflows/scripts/release-assets.py "$matrix_cmd")
+            expected=$(python3 .github/workflows/scripts/release-assets.py "$expected_cmd" "$version" | wc -l)
+            matrix_count=$(printf '%s' "$matrix" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["include"]))')
+            echo "$label: matrix entries=$matrix_count expected assets=$expected"
+            [ "$matrix_count" = "$expected" ] || {
+              echo "::error::the $label build matrix and its expected asset list disagree"
+              exit 1
+            }
+          done
+          total=$(python3 .github/workflows/scripts/release-assets.py expected "$version" | wc -l)
+          echo "expected release assets in total: $total"
