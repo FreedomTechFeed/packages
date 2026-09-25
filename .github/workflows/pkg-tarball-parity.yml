@@ -29,12 +29,14 @@ on:
     paths:
       - 'net/tollgate-wrt/Makefile'
       - 'net/tollgate-wrt/test-pkg-tarball-parity.sh'
+      - 'net/tollgate-wrt/test-postinst-readiness.sh'
       - 'net/tollgate-wrt/vendor.lock.json'
       - '.github/workflows/pkg-tarball-parity.yml'
   pull_request:
     paths:
       - 'net/tollgate-wrt/Makefile'
       - 'net/tollgate-wrt/test-pkg-tarball-parity.sh'
+      - 'net/tollgate-wrt/test-postinst-readiness.sh'
       - 'net/tollgate-wrt/vendor.lock.json'
       - '.github/workflows/pkg-tarball-parity.yml'
   schedule:
@@ -50,10 +52,13 @@ concurrency:
 
 jobs:
   parity:
-    name: staged files == pinned module tarball
+    name: staged files == pinned module tarball; postinst gates on the API
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
       - name: Compare the staged set against the pinned tarball, both ways
         run: sh net/tollgate-wrt/test-pkg-tarball-parity.sh
+
+      - name: The install is not done until :2121 answers
+        run: sh net/tollgate-wrt/test-postinst-readiness.sh
