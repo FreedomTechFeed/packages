@@ -22,6 +22,20 @@ name: Publish per-arch tollgate-wrt release assets
 # to the release. This avoids the race of several matrix jobs calling
 # softprops/action-gh-release concurrently.
 #
+# Offline dependency bundles (WAN-less install) — the ordering that matters:
+#   A freshly flashed router with NO uplink has no apk indexes, so the
+#   `DEPENDS:=+nodogsplash +jq` of the package cannot resolve. The
+#   `offline-bundle` job therefore builds, per arch,
+#   `tollgate-wrt-<PKG_VERSION>-<arch>-offline.tar.gz` (pkgs/ + MANIFEST.sha256
+#   + install-offline.sh + README.md) from the PUBLISHED apk indexes of the
+#   release it targets, and the publish job downloads those bundles BEFORE it
+#   generates and signs SHA256SUMS. That order is the point: a bundle built
+#   after signing is not covered by the signature and has no provenance. The
+#   bundle names are part of the expected asset set (release-assets.py), so the
+#   "Refuse to publish a release outside the expected asset set" gate below
+#   refuses a release whose bundle is missing, and the acceptance check at the
+#   end re-verifies the bundle from the public URL like every other asset.
+#
 # Release integrity (audit finding C3-05) — what the publish job guarantees:
 #   1. It publishes a SHA256SUMS manifest covering EVERY asset of the release,
 #      generated from the bytes it is about to upload (see
@@ -58,6 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.assets.outputs.matrix }}
+      offline_matrix: ${{ steps.assets.outputs.offline_matrix }}
       expected: ${{ steps.assets.outputs.expected }}
       version: ${{ steps.assets.outputs.version }}
     steps:
@@ -70,13 +85,17 @@ jobs:
           VERSION=$(grep '^PKG_VERSION:=' net/tollgate-wrt/Makefile | sed 's/^PKG_VERSION:=//')
           echo "PKG_VERSION=$VERSION"
           MATRIX=$(python3 .github/workflows/scripts/release-assets.py matrix)
+          OFFLINE_MATRIX=$(python3 .github/workflows/scripts/release-assets.py offline-matrix)
           {
             echo "matrix=$MATRIX"
+            echo "offline_matrix=$OFFLINE_MATRIX"
             echo "version=$VERSION"
             echo "expected<<EXPECTED_ASSETS_EOF"
             python3 .github/workflows/scripts/release-assets.py expected "$VERSION"
             echo "EXPECTED_ASSETS_EOF"
           } >> "$GITHUB_OUTPUT"
+          echo "--- offline bundle matrix"
+          echo "$OFFLINE_MATRIX"
           echo "--- expected assets"
           python3 .github/workflows/scripts/release-assets.py expected "$VERSION"
 
@@ -143,9 +162,83 @@ jobs:
           path: tollgate-wrt_*_${{ matrix.arch }}.${{ matrix.ext }}
           if-no-files-found: error
 
+  offline-bundle:
+    name: Build offline dependency bundle (${{ matrix.arch }})
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.preflight.outputs.offline_matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download the tollgate-wrt package for ${{ matrix.arch }}
+        uses: actions/download-artifact@v7
+        with:
+          name: tollgate-wrt-${{ matrix.arch }}-${{ matrix.ext }}
+          path: staged
+
+      # The installer ships INSIDE the bundle and is NOT a single file: the
+      # driver also needs its router-side companion (install-router.sh) and the
+      # management keepalive seed, and it refuses to install without them. So the
+      # whole pinned scripts/offline/ directory is fetched at a COMMIT (never a
+      # branch) and the job fails closed when it cannot be fetched.
+      - name: Fetch the pinned offline installer (OFFLINE-BUNDLE-2)
+        env:
+          INSTALLER_REPO: OpenTollGate/physical-router-test-automation
+          INSTALLER_PATH: scripts/offline
+          INSTALLER_REF: ${{ vars.OFFLINE_INSTALLER_REF || 'SET-ME-to-the-OFFLINE-BUNDLE-2-commit' }}
+        run: |
+          set -euo pipefail
+          echo "pinned installer ref: ${INSTALLER_REPO}@${INSTALLER_REF}:${INSTALLER_PATH}"
+          mkdir -p installer-repo && cd installer-repo
+          git init -q .
+          git remote add origin "https://github.com/${INSTALLER_REPO}.git"
+          if ! git fetch -q --depth 1 origin "${INSTALLER_REF}"; then
+            echo "::error::could not fetch ${INSTALLER_REF} from ${INSTALLER_REPO}"
+            echo "::error::the WAN-less bundle ships the ordered installer, so it cannot be built without it. Land OFFLINE-BUNDLE-2 in ${INSTALLER_REPO} and set the repository variable OFFLINE_INSTALLER_REF to its merge commit."
+            exit 1
+          fi
+          git checkout -q FETCH_HEAD -- "${INSTALLER_PATH}"
+          test -s "${INSTALLER_PATH}/install-offline.sh"
+          test -s "${INSTALLER_PATH}/install-router.sh"
+          test -s "${INSTALLER_PATH}/templates/99z-mgmt-keepalive"
+          for f in install-offline.sh install-router.sh templates/99z-mgmt-keepalive; do
+            echo "${f} sha256: $(sha256sum "${INSTALLER_PATH}/${f}" | awk '{print $1}')"
+          done
+          echo "installer commit: $(git rev-parse FETCH_HEAD)"
+
+      - name: Resolve, verify and package the offline dependency bundle
+        run: |
+          set -euo pipefail
+          TOLLGATE_APK=$(find staged -maxdepth 2 -type f -name 'tollgate-wrt_*.apk' | head -n1)
+          if [ -z "$TOLLGATE_APK" ]; then
+            echo "::error::no tollgate-wrt .apk was staged for ${{ matrix.arch }}"
+            exit 1
+          fi
+          echo "tollgate package: $TOLLGATE_APK"
+          python3 .github/workflows/scripts/offline-bundle.py build \
+            --cache-dir "$RUNNER_TEMP/offline-cache" \
+            --release "${{ matrix.release }}" \
+            --arch "${{ matrix.arch }}" \
+            --target "${{ matrix.target }}" \
+            --profile "${{ matrix.profile }}" \
+            --pkg-version "${{ needs.preflight.outputs.version }}" \
+            --tollgate-apk "$TOLLGATE_APK" \
+            --installer-dir installer-repo/scripts/offline \
+            --out out
+          ls -lh out/
+
+      - name: Upload the offline bundle artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: offline-bundle-${{ matrix.arch }}
+          path: out/*-offline.tar.gz
+          if-no-files-found: error
+
   publish:
     name: Publish release assets + SHA256SUMS
-    needs: [preflight, build]
+    needs: [preflight, build, offline-bundle]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -157,6 +250,18 @@ jobs:
       - name: Download all per-arch assets
         uses: actions/download-artifact@v7
         with:
+          pattern: tollgate-wrt-*
+          path: assets
+          merge-multiple: true
+
+      # BEFORE the manifest is generated and signed: the signed SHA256SUMS is
+      # what gives the bundle its provenance, and it can only cover bytes that
+      # are already staged here. offline-bundle-test.sh asserts this ordering,
+      # including against a mutated copy of this file.
+      - name: Download the offline bundles
+        uses: actions/download-artifact@v7
+        with:
+          pattern: offline-bundle-*
           path: assets
           merge-multiple: true
 
