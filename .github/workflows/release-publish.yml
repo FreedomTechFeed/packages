@@ -178,25 +178,35 @@ jobs:
           name: tollgate-wrt-${{ matrix.arch }}-${{ matrix.ext }}
           path: staged
 
-      # The installer ships INSIDE the bundle, so it is pinned by COMMIT and the
-      # job fails closed when it cannot be fetched: a bundle without
-      # install-offline.sh is not installable.
+      # The installer ships INSIDE the bundle and is NOT a single file: the
+      # driver also needs its router-side companion (install-router.sh) and the
+      # management keepalive seed, and it refuses to install without them. So the
+      # whole pinned scripts/offline/ directory is fetched at a COMMIT (never a
+      # branch) and the job fails closed when it cannot be fetched.
       - name: Fetch the pinned offline installer (OFFLINE-BUNDLE-2)
         env:
           INSTALLER_REPO: OpenTollGate/physical-router-test-automation
+          INSTALLER_PATH: scripts/offline
           INSTALLER_REF: ${{ vars.OFFLINE_INSTALLER_REF || 'SET-ME-to-the-OFFLINE-BUNDLE-2-commit' }}
         run: |
           set -euo pipefail
-          url="https://raw.githubusercontent.com/${INSTALLER_REPO}/${INSTALLER_REF}/install-offline.sh"
-          echo "pinned installer: $url"
-          if ! curl -fsSL --retry 5 --retry-all-errors "$url" -o install-offline.sh; then
-            echo "::error::could not fetch install-offline.sh from $url"
-            echo "::error::the WAN-less bundle ships the ordered installer, so it cannot be built without it. Land OFFLINE-BUNDLE-2 in OpenTollGate/physical-router-test-automation and set the repository variable OFFLINE_INSTALLER_REF to its merge commit."
+          echo "pinned installer ref: ${INSTALLER_REPO}@${INSTALLER_REF}:${INSTALLER_PATH}"
+          mkdir -p installer-repo && cd installer-repo
+          git init -q .
+          git remote add origin "https://github.com/${INSTALLER_REPO}.git"
+          if ! git fetch -q --depth 1 origin "${INSTALLER_REF}"; then
+            echo "::error::could not fetch ${INSTALLER_REF} from ${INSTALLER_REPO}"
+            echo "::error::the WAN-less bundle ships the ordered installer, so it cannot be built without it. Land OFFLINE-BUNDLE-2 in ${INSTALLER_REPO} and set the repository variable OFFLINE_INSTALLER_REF to its merge commit."
             exit 1
           fi
-          test -s install-offline.sh
-          chmod +x install-offline.sh
-          echo "install-offline.sh sha256: $(sha256sum install-offline.sh | awk '{print $1}')"
+          git checkout -q FETCH_HEAD -- "${INSTALLER_PATH}"
+          test -s "${INSTALLER_PATH}/install-offline.sh"
+          test -s "${INSTALLER_PATH}/install-router.sh"
+          test -s "${INSTALLER_PATH}/templates/99z-mgmt-keepalive"
+          for f in install-offline.sh install-router.sh templates/99z-mgmt-keepalive; do
+            echo "${f} sha256: $(sha256sum "${INSTALLER_PATH}/${f}" | awk '{print $1}')"
+          done
+          echo "installer commit: $(git rev-parse FETCH_HEAD)"
 
       - name: Resolve, verify and package the offline dependency bundle
         run: |
@@ -215,7 +225,7 @@ jobs:
             --profile "${{ matrix.profile }}" \
             --pkg-version "${{ needs.preflight.outputs.version }}" \
             --tollgate-apk "$TOLLGATE_APK" \
-            --installer install-offline.sh \
+            --installer-dir installer-repo/scripts/offline \
             --out out
           ls -lh out/
 

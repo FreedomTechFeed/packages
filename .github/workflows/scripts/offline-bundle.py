@@ -917,7 +917,7 @@ def write_manifest(directory):
     return manifest, len(lines)
 
 
-def readme_text(payload, version, installer_note):
+def readme_text(payload, version, installer_note, layout):
     names = sorted(m["name"] for m in payload["members"])
     base = ", ".join(e["name"] for e in payload["base_provided"]) or "(none)"
     stubs = ", ".join(e["name"] for e in payload["stubbed"]) or "(none)"
@@ -928,10 +928,7 @@ OpenWrt %s for `%s` / `%s`. The router itself needs NO uplink.
 
 ## Contents
 
-    pkgs/               %d packages (tollgate-wrt + its closed dependency set)
-    MANIFEST.sha256     sha256 of every file in this bundle
-    install-offline.sh  the ordered, no-brick installer
-    README.md           this file
+%s
 
 Members (%d):
 
@@ -972,7 +969,8 @@ this bundle or already in the base image.
 * The dependency closure is resolved for the release and target above. Flashing
   a different OpenWrt release or target needs a bundle built for that pair.
 """ % (version, payload["arch"], payload["release"], payload["arch"],
-       payload["target"], payload["member_count"],
+       payload["target"],
+       "\n".join("    %s" % line for line in layout),
        payload["member_count"], "\n".join("    %s" % n for n in names) or "    (none)",
        len(payload["base_provided"]), base,
        len(payload["stubbed"]), stubs, installer_note)
@@ -1004,12 +1002,44 @@ def cmd_assemble(args):
         shutil.copy2(candidate, os.path.join(pkgs, member["file"]))
 
     installer_note = ""
+    installer_files = []
     installer = args.installer
-    if installer:
+    installer_dir = getattr(args, "installer_dir", "")
+    if installer and installer_dir:
+        raise Fail("pass --installer or --installer-dir, not both")
+    if installer_dir:
+        # The installer is not a single file: the bundle must also carry its
+        # router-side companion (install-router.sh) and the management keepalive
+        # seed, or the driver refuses to install. Copy the whole pinned
+        # directory so the bundle root matches what the driver looks for.
+        src_dir = os.path.abspath(installer_dir)
+        if not os.path.isdir(src_dir):
+            raise Fail("--installer-dir %s is not a directory" % installer_dir)
+        main = os.path.join(src_dir, INSTALLER_NAME)
+        if not os.path.isfile(main):
+            raise Fail("--installer-dir %s has no %s" % (installer_dir, INSTALLER_NAME))
+        for root, dirs, files in os.walk(src_dir):
+            dirs.sort()
+            for name in sorted(files):
+                src = os.path.join(root, name)
+                rel = os.path.relpath(src, src_dir)
+                dest = os.path.join(bundle_dir, rel)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copy2(src, dest)
+                os.chmod(dest, os.stat(src).st_mode & 0o777)
+                installer_files.append(rel)
+        installer_note = ("installer (pinned, from OFFLINE-BUNDLE-2 / "
+                          "OpenTollGate/physical-router-test-automation "
+                          "scripts/offline/): %d file(s), install-offline.sh "
+                          "sha256 %s"
+                          % (len(installer_files),
+                             sha256_file(os.path.join(bundle_dir, INSTALLER_NAME))))
+    elif installer:
         if not os.path.isfile(installer):
             raise Fail("--installer %s does not exist" % installer)
         shutil.copy2(installer, os.path.join(bundle_dir, INSTALLER_NAME))
         os.chmod(os.path.join(bundle_dir, INSTALLER_NAME), 0o755)
+        installer_files.append(INSTALLER_NAME)
         installer_note = ("install-offline.sh: shipped in this bundle, %s\n"
                           "(OFFLINE-BUNDLE-2, OpenTollGate/physical-router-test-automation)"
                           % sha256_file(os.path.join(bundle_dir, INSTALLER_NAME)))
@@ -1023,9 +1053,20 @@ def cmd_assemble(args):
                    "installable (pass --installer <path>, or --allow-missing-installer "
                    "to build a non-shipping bundle)")
 
+    layout = ["pkgs/  (%d packages: the tollgate-wrt package + its closed "
+              "dependency set)" % payload["member_count"],
+              "MANIFEST.sha256  sha256 of every file in this bundle"]
+    layout += ["%s  (installer)" % name for name in
+               sorted(n for n in installer_files if os.sep not in n)]
+    layout += ["%s" % name for name in
+               sorted(n for n in installer_files if os.sep in n)]
+    layout.append("README.md  this file")
+
     readme = os.path.join(bundle_dir, "README.md")
     with open(readme, "w", encoding="utf-8") as fh:
-        fh.write(readme_text(payload, args.pkg_version, installer_note))
+        fh.write(readme_text(payload, args.pkg_version, installer_note, layout))
+    log("installer files: %s" % ", ".join(installer_files) if installer_files
+        else "installer files: (none)")
 
     manifest, count = write_manifest(bundle_dir)
     check = subprocess.run(["sha256sum", "--check", "--strict", MANIFEST_NAME],
@@ -1049,6 +1090,7 @@ def cmd_assemble(args):
     required = ["pkgs", "MANIFEST.sha256", "README.md"]
     if not args.allow_missing_installer:
         required.append(INSTALLER_NAME)
+    required += [n for n in installer_files if os.sep not in n]
     for expected in required:
         if expected not in rooted:
             raise Fail("archive %s is missing %s (has: %s)"
@@ -1173,7 +1215,13 @@ def main(argv):
     asm_p.add_argument("--apks-dir", default="")
     asm_p.add_argument("--arch", default="")
     asm_p.add_argument("--pkg-version", required=True)
-    asm_p.add_argument("--installer", default="")
+    asm_p.add_argument("--installer", default="",
+                       help="a single install-offline.sh for the bundle root")
+    asm_p.add_argument("--installer-dir", default="",
+                       help="the pinned installer DIRECTORY (scripts/offline/): "
+                            "every file in it is copied into the bundle root, "
+                            "because the driver needs install-router.sh and the "
+                            "keepalive template too")
     asm_p.add_argument("--allow-missing-installer", action="store_true")
     asm_p.add_argument("--out", required=True)
     asm_p.set_defaults(func=cmd_assemble)
@@ -1194,6 +1242,7 @@ def main(argv):
     build_p.add_argument("--allow-stub", default="")
     build_p.add_argument("--out", required=True)
     build_p.add_argument("--installer", default="")
+    build_p.add_argument("--installer-dir", default="")
     build_p.add_argument("--allow-missing-installer", action="store_true")
     build_p.add_argument("--refresh", action="store_true")
     build_p.set_defaults(func=cmd_build)

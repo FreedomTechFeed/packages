@@ -40,10 +40,10 @@
 #   FAIL manifest does not cover the tollgate-wrt package
 #   FAIL tampered byte fails the manifest check
 #   FAIL a member whose bytes changed after fetching is refused
-#   20 passed, 6 failed        <- rc=1
+#   24 passed, 6 failed        <- rc=1
 #
 # GREEN $ bash .github/workflows/scripts/offline-bundle-test.sh
-#   26 passed, 0 failed        <- rc=0
+#   30 passed, 0 failed        <- rc=0
 #
 # The ordering assertions (group C) also ran RED before release-publish.yml was
 # wired: "release workflow does not build the offline bundle before signing
@@ -348,6 +348,44 @@ if assemble "$WORK/out-noplaceholder" --allow-missing-installer; then
   fi
 else
   fail "--allow-missing-installer: $(tail -n2 "$WORK/assemble.log")"
+fi
+
+# The installer is a DIRECTORY, not a file: the driver (OFFLINE-BUNDLE-2) also
+# needs install-router.sh and the management keepalive seed, and refuses to
+# install a bundle without them. --installer-dir must carry all of it.
+mkdir -p "$WORK/installer-src/templates"
+printf '#!/bin/sh\necho driver\n' > "$WORK/installer-src/install-offline.sh"
+printf '#!/bin/sh\necho router side\n' > "$WORK/installer-src/install-router.sh"
+printf 'trustedmac + allow tcp port 22\n' > "$WORK/installer-src/templates/99z-mgmt-keepalive"
+chmod +x "$WORK/installer-src/install-offline.sh" "$WORK/installer-src/install-router.sh"
+if assemble "$WORK/out-dir" --installer-dir "$WORK/installer-src"; then
+  BUNDLE_DIR_CASE="$WORK/out-dir/tollgate-wrt-${VERSION}-${ARCH}-offline"
+  missing=""
+  for member in install-offline.sh install-router.sh templates/99z-mgmt-keepalive; do
+    [ -f "$BUNDLE_DIR_CASE/$member" ] || missing="$missing $member"
+  done
+  if [ -z "$missing" ]; then
+    pass "--installer-dir carries the driver's companions (install-router.sh + keepalive seed)"
+  else
+    fail "--installer-dir did not carry:$missing"
+  fi
+  if grep -c 'install-router.sh\|templates/99z-mgmt-keepalive' "$BUNDLE_DIR_CASE/MANIFEST.sha256" | grep -qx 2; then
+    pass "the manifest covers the installer's companion files"
+  else
+    fail "the manifest does not cover the installer's companions"
+  fi
+  if tar -tzf "$WORK/out-dir/tollgate-wrt-${VERSION}-${ARCH}-offline.tar.gz" | grep -F './templates/99z-mgmt-keepalive' >/dev/null; then
+    pass "the archive carries the keepalive seed"
+  else
+    fail "the archive does not carry the keepalive seed"
+  fi
+else
+  fail "--installer-dir assembly: $(tail -n2 "$WORK/assemble.log")"
+fi
+if assemble "$WORK/out-dir-noinstaller" --installer-dir "$WORK/payload.json"; then
+  fail "an --installer-dir without install-offline.sh is refused"
+else
+  pass "an --installer-dir without install-offline.sh is refused"
 fi
 
 # A payload member whose bytes changed since it was fetched must not be shipped.
