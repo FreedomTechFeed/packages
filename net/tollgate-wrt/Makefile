@@ -127,9 +127,9 @@ PKG_NAME:=tollgate-wrt
 # that: the file the package was missing
 # (packaging/files/etc/nftables.d/31-admin-board-not-guest-reachable.nft, added
 # by module #566) is ALREADY in the pre16 tarball at 2796d96c, so no module
-# change is required. Module pin, PKG_SOURCE_TAG, the portal lock and PKG_HASH
-# are therefore all UNCHANGED from pre16 — PKG_HASH is never recomputed without
-# a pin move. Through pre16 the recipe staged etc/nftables.d/ from an explicit
+# change was required for pre17. Module pin, PKG_SOURCE_TAG, the portal lock and
+# PKG_HASH were therefore all left UNCHANGED from pre16 — PKG_HASH is never
+# recomputed without a pin move, and pre18 moves the hash WITH the pin (below). Through pre16 the recipe staged etc/nftables.d/ from an explicit
 # two-filename list, so that third fragment shipped upstream and never reached
 # the package: the published pre16 APK's /etc/nftables.d/ held only
 # 20-nds-enforce.nft and 30-backend-firewall.nft (plus the nodogsplash
@@ -140,6 +140,36 @@ PKG_NAME:=tollgate-wrt
 # net/tollgate-wrt/test-pkg-tarball-parity.sh is the both-directions guard that
 # compares the staged set against the tarball's own packaging/files/ tree, so a
 # future fragment (or a vanished one) fails a test instead of silently shipping.
+#
+# pre18 does BOTH things the pre17 hardware acceptance demanded, and nothing
+# else: it moves the pin and it fixes the install sequence.
+#
+# (1) The pin moves to cfbfff5a — module main TIP (0 commits behind main; 27
+# commits past the v0.6.0-alpha4 tag), replacing 2796d96c, and PKG_HASH is
+# recomputed for it. The hash is not a chore bolted on: it IS the identity of
+# what every gate below measures, and test-pkg-tarball-parity.sh Gate A fails a
+# pin move whose hash was not recalibrated. Tarball sha256 at cfbfff5a:
+# 69e3910a33b75c6221e3b0c62a7d1c76683f88f7c8d0651db8ebe686adb54a47 (codeload,
+# PKG_SOURCE_URL below). PKG_SOURCE_TAG stays v0.6.0-alpha4 — the repo-root
+# VERSION file at cfbfff5a is still v0.6.0-alpha4 (Gate B re-checks it) — and the
+# lock stays the deliberate one-commit-ahead pin described below: the module's
+# declared .portal.commit at cfbfff5a is STILL e6fe0e0e, unchanged from
+# 2796d96c. The pin carries #579 (nodogsplash reload), #578 (order-aware setup
+# marker), #563 (the router happy-path harness this round ran on hardware),
+# #561, #572, #539 and #519.
+#
+# (2) pre17's postinst ran the three uci-defaults scripts and restarted ONLY
+# /etc/init.d/tollgate-wrt. Those scripts write config; on an install onto a
+# RUNNING router the live firewall/dnsmasq/uhttpd/nodogsplash keep the state
+# they loaded at their own start, so the package was installed while the box
+# still enforced the previous configuration — measured on the bench MT3000 as
+# the four operator symptoms (LuCI served on :8090, icon-colour.png against the
+# wrong webroot, no captive-portal redirect chain, IPv6 RAs still advertised)
+# that disappeared only after a manual `fw4 reload`. The module's own postinst
+# at PKG_SOURCE_VERSION already ran the correct sequence; this feed's recipe was
+# the only install path missing it (see the ported block in
+# Package/tollgate-wrt/postinst below). No new design, no new dependency: the
+# same commands, the same order.
 #
 # THE LOCK'S PORTAL PIN MOVES ONE COMMIT AHEAD OF THE MODULE'S DECLARED ONE, and
 # that is deliberate, not an oversight. vendor.lock.json -> portal_commit
@@ -157,19 +187,20 @@ PKG_NAME:=tollgate-wrt
 # a known divergence so nobody "fixes" the lock back: for this pre-release the
 # club artifact deliberately carries BOTH halves of the admin-credential fix.
 #
-# Read `_pre16`/`_pre17` honestly: like pre15, the pin sits AFTER the
+# Read `_pre16`/`_pre17`/`_pre18` honestly: like pre15, the pin sits AFTER the
 # v0.6.0-alpha4 tag, so this is a post-tag MAIN-TIP build of the alpha4 line,
 # not a build that precedes the tag. The ordering the scheme needs still holds,
 # and is why the base moved at pre15 (the feed's tag base has always equalled
 # the module VERSION at the pin):
-#     0.6.0_alpha2_pre13 < 0.6.0_alpha4_pre15 < 0.6.0_alpha4_pre16 < 0.6.0_alpha4_pre17 < 0.6.0_alpha4
+#     0.6.0_alpha2_pre13 < 0.6.0_alpha4_pre15 < 0.6.0_alpha4_pre16 < 0.6.0_alpha4_pre17
+#     < 0.6.0_alpha4_pre18 < 0.6.0_alpha4
 # checked with the apk-tools 3 oracle (`apk version -c` legality, `apk version -t`
 # ordering) on openwrt/rootfs:x86_64-v25.12.4 — see the PR body for the output.
 # Consequence, stated rather than hidden: a device already running a published
 # `0.6.0_alpha4` build is NOT offered this package (only pre-train devices are),
 # by construction — the version string sorts below the tag even though these
 # bytes are newer than it.
-PKG_VERSION:=0.6.0_alpha4_pre17
+PKG_VERSION:=0.6.0_alpha4_pre18
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -195,13 +226,15 @@ PKG_VERSION:=0.6.0_alpha4_pre17
 # admin credential fix), because the FEED — not the module tarball — ships the
 # rpcd plugin, the rpcd ACL, 92-tollgate-admin-setup and the built admin SPA.
 # See the pre16 block above for the full reasoning.
-# pre17 leaves this pin, PKG_SOURCE_TAG, the portal lock and PKG_HASH UNCHANGED
-# from pre16, deliberately: the audit showed the missing nftables fragment is
-# already in the 2796d96c tarball, so a module change would be unnecessary churn
-# on a community feed (see the pre17 block above).
+# pre17 left this pin, PKG_SOURCE_TAG, the portal lock and PKG_HASH UNCHANGED
+# from pre16, deliberately: the audit showed the missing nftables fragment was
+# already in the 2796d96c tarball, so a module change would have been
+# unnecessary churn on a community feed (see the pre17 block above). pre18 MOVES
+# the pin and the hash together and leaves PKG_SOURCE_TAG and the portal lock
+# alone, for the reasons in the pre18 block above.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=2796d96c89363ce96a41c22d8f2180ccb948487c
+PKG_SOURCE_VERSION:=cfbfff5a9e6aa1de03dda783e9b930d9c36e0bf9
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -273,7 +306,7 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # `.../tar.gz/v0.6.0-alpha4?` resolves 200 but hashes DIFFERENTLY
 # (28d63edb…), i.e. it is not the commit tarball this pin builds from.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=132ebf00dae70b5820eff571b6f1bb66a22f61755f93647b412674baed44ce8c
+PKG_HASH:=69e3910a33b75c6221e3b0c62a7d1c76683f88f7c8d0651db8ebe686adb54a47
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
@@ -433,20 +466,66 @@ define Package/tollgate-wrt/postinst
 [ -n "$${IPKG_INSTROOT:-}" ] && exit 0
 
 # Run the oneshot UCI defaults immediately so an install on a running router
-# takes effect without waiting for the next boot, then enable the service.
+# takes effect without waiting for the next boot, THEN RELOAD THE SERVICES.
+#
+# The reloads are not belt-and-braces, they are the difference between an
+# installed package and an applied one. All three scripts above only WRITE
+# config: at boot that is enough, because procd reads the config as it brings
+# each service up. On an install onto a RUNNING router it is not — firewall,
+# dnsmasq, uhttpd and nodogsplash keep the config they loaded when they started,
+# so the box goes on enforcing the previous state. Measured on the bench
+# GL-MT3000 (pre17, install without reboot): the admin guard chain was absent
+# until a manual `fw4 reload`; :8090 served LuCI (uhttpd.main home=/www) instead
+# of the admin board; icon-colour.png resolved against the wrong webroot; the
+# nodogsplash redirect chains were missing while 20-nds-enforce.nft still
+# rejected; and IPv6 RAs were still advertised because dhcp.lan.ra=disabled was
+# never loaded.
+#
+# This block is a VERBATIM port of the sequence the module's own postinst runs
+# (packaging/Makefile at PKG_SOURCE_VERSION, the "Restarting network..." block),
+# so the module's build and this feed's package reload the same set in the same
+# order. The network restart can take br-lan/br-private down, hence the wait
+# before the services that bind to them are reloaded.
+wait_for_iface() {
+	local iface="$$1" count=0
+	while [ $$count -lt 15 ]; do
+		[ -d "/sys/class/net/$$iface" ] && return 0
+		sleep 1
+		count=$$((count + 1))
+	done
+	echo "Warning: $$iface did not appear within 15 s" >&2
+	return 1
+}
+
 for script in /etc/uci-defaults/90-tollgate-captive-portal-symlink \
               /etc/uci-defaults/99-tollgate-setup \
               /etc/uci-defaults/92-tollgate-admin-setup; do
 	if [ -x "$$script" ]; then
+		echo "Running $$script ..."
 		"$$script" || echo "Warning: $$script exited with code $$?" >&2
 	fi
 done
 
+echo "Restarting network..."
+/etc/init.d/network restart 2>/dev/null || true
+wait_for_iface br-lan
+wait_for_iface br-private || echo "Note: br-private not found — this is expected on devices without a private network configured."
+
+echo "Reloading remaining services..."
+wifi reload 2>/dev/null || true
+/etc/init.d/firewall reload 2>/dev/null || true
+/etc/init.d/dnsmasq restart 2>/dev/null || true
+/etc/init.d/uhttpd restart 2>/dev/null || true
+/etc/init.d/nodogsplash restart 2>/dev/null || true
+
 if [ -x /etc/init.d/tollgate-wrt ]; then
+	# stop/start, not restart: an in-place apk/opkg upgrade must execute the NEW
+	# binary, and the daemon has to come up AFTER the reloads above.
 	/etc/init.d/tollgate-wrt enable 2>/dev/null || true
-	# Restart so an in-place apk/opkg upgrade runs the new binary immediately;
-	# otherwise the running daemon keeps the old process until the next reboot.
-	/etc/init.d/tollgate-wrt restart 2>/dev/null || true
+	/etc/init.d/tollgate-wrt stop 2>/dev/null || true
+	/etc/init.d/tollgate-wrt start 2>/dev/null || true
+else
+	echo "Warning: /etc/init.d/tollgate-wrt not found, skipping service start" >&2
 fi
 
 exit 0
