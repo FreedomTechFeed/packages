@@ -52,6 +52,23 @@
 #      fragments executed as `install -m0644 "ft"` — `$$nft` became `$nft` and
 #      then `$n` (empty) + `ft` — and failed the package build. The guarded
 #      directory is staged by wildcard instead, which needs no shell variable.
+#   I. the postinst APPLIES what the uci-defaults only WRITE, in the module's
+#      own order. A shipped config fragment is not an active control: the recipe
+#      runs /etc/uci-defaults/ on a RUNNING router, and firewall/dnsmasq/uhttpd/
+#      nodogsplash keep the state they loaded at their own start unless the
+#      install reloads them. Measured on the bench GL-MT3000 with the published
+#      pre17 package: 31-admin-board-not-guest-reachable.nft was on disk
+#      byte-identical to the apk and the guard chain did not exist, so :8090 and
+#      :8443 still answered HTTP 200 from a br-lan (guest) client — the exact
+#      thing that fragment ships to prevent — until a manual `fw4 reload`. The
+#      module's own packaging/Makefile has always reloaded the services; only
+#      this feed's recipe did not, which is why Gate I compares the two bodies
+#      AT THE PIN instead of trusting either: the ordered service-action
+#      sequence of the module's postinst must appear, in that order, in the
+#      feed's, the firewall reload must follow the last uci-defaults invocation
+#      (the ordering IS the fix), and the nodogsplash restart must follow the
+#      firewall reload (an fw4 reload flushes ND's injected chains). A copy that
+#      silently drops or reorders a reload fails here instead of on hardware.
 #
 # THE ONE DOCUMENTED EXCLUSION: packaging/files/tollgate-captive-portal-site/.
 # The module ships a checked-in, ASSET-LESS copy of the guest portal (the vite
@@ -65,8 +82,8 @@
 # The exclusion is one fixed prefix and Gate G refuses it over a guarded dir.
 #
 # Exit status: 0 = pass, 1 = fail. Needs git, awk, tar, find, sort, comm,
-# sha256sum and python3 (python3 only to read vendor.lock.json, matching
-# test-devendored.sh's dependency set).
+# sha256sum and python3 (python3 only to read vendor.lock.json and to compare the
+# two postinst action sequences, matching test-devendored.sh's dependency set).
 #
 # Env overrides:
 #   TOLLGATE_PKG_TARBALL=<file>  use this tarball instead of the cached download
@@ -391,6 +408,141 @@ if [ -s "$SCRATCH/shelldollar.txt" ]; then
     sed 's/^/      /' "$SCRATCH/shelldollar.txt" >&2
 else
     ok "Gate H: no \$\$shell-variable use in the install recipe"
+fi
+
+# ---------------------------------------------------------------- Gate I ----
+# The feed postinst must APPLY the config, the way the module's own postinst
+# does, at the SAME pin. See the header: the published pre17 package shipped
+# 31-admin-board-not-guest-reachable.nft, the guard chain did not exist after the
+# install, and :8090/:8443 answered 200 from br-lan until a manual fw4 reload.
+#
+# Body extraction: the define bodies, comment lines dropped (a comment that
+# names a command is documentation, never an execution).
+extract_define() {   # $1=makefile $2=ere matching the define name
+    awk -v want="$2" '
+        !inb && $0 ~ ("^define[[:space:]]+" want "[[:space:]]*$") { inb = 1; next }
+        inb && /^endef[[:space:]]*$/ { exit }
+        inb { print }
+    ' "$1"
+}
+
+# Ordered service actions, one per line, comments skipped. Recognised shapes:
+#   /etc/init.d/<svc> <verb>          -> init:<svc>:<verb>
+#   .../uci-defaults/<script>         -> uci-defaults
+#   wifi reload                       -> wifi:reload
+# Only the first match on a line is recorded: the recipe runs one action per line
+# and a line carrying two would be a rewrite of the block, not a port of it.
+actions_of() {
+    awk '
+        /^[[:space:]]*#/ { next }
+        {
+            line = $0
+            if (line ~ /\/etc\/uci-defaults\//) { print "uci-defaults"; next }
+            if (match(line, /\/etc\/init\.d\/[A-Za-z0-9_.-]+[[:space:]]+(enable|disable|restart|reload|start|stop)/)) {
+                m = substr(line, RSTART, RLENGTH)
+                gsub(/[[:space:]]+/, ":", m)
+                sub(/^\/etc\/init\.d\//, "init:", m)
+                print m; next
+            }
+            if (line ~ /(^|[^A-Za-z0-9_-])wifi[[:space:]]+reload([^A-Za-z0-9_-]|$)/) { print "wifi:reload"; next }
+        }
+    '
+}
+
+# Shell functions the body defines (helper parity: the port carries the helpers
+# it calls, e.g. wait_for_iface).
+functions_of() {
+    awk '
+        /^[[:space:]]*#/ { next }
+        match($0, /^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)/) {
+            name = substr($0, RSTART, RLENGTH)
+            gsub(/[[:space:]()]/, "", name)
+            print name
+            next
+        }
+    '
+}
+
+MOD_MK="$TOP/packaging/Makefile"
+if [ ! -f "$MOD_MK" ]; then
+    fail "Gate I: the pinned tarball has no packaging/Makefile -- cannot compare the postinsts"
+else
+    extract_define "$MOD_MK" 'Package/.*/postinst' > "$SCRATCH/mod-postinst.txt"
+    extract_define "$MK" 'Package/tollgate-wrt/postinst' > "$SCRATCH/feed-postinst.txt"
+
+    if [ ! -s "$SCRATCH/mod-postinst.txt" ]; then
+        fail "Gate I: no 'define Package/<name>/postinst' body in the pinned tarball's packaging/Makefile"
+    elif [ ! -s "$SCRATCH/feed-postinst.txt" ]; then
+        fail "Gate I: no 'define Package/tollgate-wrt/postinst' body in $MK"
+    else
+        actions_of < "$SCRATCH/mod-postinst.txt" > "$SCRATCH/mod-actions.txt"
+        actions_of < "$SCRATCH/feed-postinst.txt" > "$SCRATCH/feed-actions.txt"
+        functions_of < "$SCRATCH/mod-postinst.txt" > "$SCRATCH/mod-funcs.txt"
+        functions_of < "$SCRATCH/feed-postinst.txt" > "$SCRATCH/feed-funcs.txt"
+
+        n_mod_a=$(wc -l < "$SCRATCH/mod-actions.txt" | tr -d ' ')
+        n_feed_a=$(wc -l < "$SCRATCH/feed-actions.txt" | tr -d ' ')
+        echo "--- postinst actions: module $n_mod_a, feed $n_feed_a"
+        sed 's/^/      module: /' "$SCRATCH/mod-actions.txt"
+        sed 's/^/      feed  : /' "$SCRATCH/feed-actions.txt"
+
+        if [ "$n_mod_a" = 0 ]; then
+            fail "Gate I: the module postinst carries no service actions -- the comparison has lost its target"
+        else
+            # I.a ordered coverage: the module's sequence must appear, in order,
+            # in the feed's. Missing OR reordered both fail.
+            python3 - "$SCRATCH/mod-actions.txt" "$SCRATCH/feed-actions.txt" <<'PY' > "$SCRATCH/seq.txt" 2>&1
+import sys
+mod = [l.strip() for l in open(sys.argv[1]) if l.strip()]
+feed = [l.strip() for l in open(sys.argv[2]) if l.strip()]
+i = 0
+for act in mod:
+    while i < len(feed) and feed[i] != act:
+        i += 1
+    if i == len(feed):
+        print("%s" % act)
+        sys.exit(1)
+    i += 1
+sys.exit(0)
+PY
+            if [ $? -eq 0 ]; then
+                ok "Gate I: the module's $n_mod_a service action(s) are all present in the feed postinst, in the module's order"
+            else
+                fail "Gate I: the feed postinst does not perform the module's postinst sequence -- first missing/reordered action: $(cat "$SCRATCH/seq.txt")"
+            fi
+        fi
+
+        # I.b helper parity: whatever the module's body defines and calls, the
+        # feed's copy must define too.
+        while read -r fn; do
+            [ -n "$fn" ] || continue
+            grep -qx "$fn" "$SCRATCH/feed-funcs.txt" || \
+                fail "Gate I: the module postinst defines '$fn' but the feed postinst does not"
+        done < "$SCRATCH/mod-funcs.txt"
+
+        # I.c the guard, named. These two lines are the fix for the measured
+        # bench defect, so they are asserted by name, not only by sequence.
+        ln_last_uci=$(grep -n '/etc/uci-defaults/' "$SCRATCH/feed-postinst.txt" | tail -n 1 | cut -d: -f1)
+        ln_fw=$(grep -n '/etc/init\.d/firewall[[:space:]]\+reload' "$SCRATCH/feed-postinst.txt" | head -n 1 | cut -d: -f1)
+        ln_nd=$(grep -n '/etc/init\.d/nodogsplash[[:space:]]\+restart' "$SCRATCH/feed-postinst.txt" | head -n 1 | cut -d: -f1)
+
+        if [ -z "$ln_fw" ]; then
+            fail "Gate I: the feed postinst never reloads the firewall -- the nftables fragments ship but stay INERT until a reboot (the published pre17 defect: :8090/:8443 answered 200 from br-lan)"
+        elif [ -z "$ln_nd" ]; then
+            fail "Gate I: the feed postinst never restarts nodogsplash -- an fw4 reload flushes ND's injected chains, so the captive redirect stays incomplete"
+        else
+            if [ -n "$ln_last_uci" ] && [ "$ln_fw" -lt "$ln_last_uci" ]; then
+                fail "Gate I: the firewall reload (line $ln_fw) precedes the last uci-defaults invocation (line $ln_last_uci) -- the config would be reloaded BEFORE it is written"
+            else
+                ok "Gate I: firewall reload follows the last uci-defaults invocation (defaults line $ln_last_uci, reload line $ln_fw)"
+            fi
+            if [ "$ln_nd" -lt "$ln_fw" ]; then
+                fail "Gate I: the nodogsplash restart (line $ln_nd) precedes the firewall reload (line $ln_fw) -- the fw4 reload would flush ND's freshly injected chains"
+            else
+                ok "Gate I: nodogsplash restart follows the firewall reload (reload line $ln_fw, ND restart line $ln_nd)"
+            fi
+        fi
+    fi
 fi
 
 if [ "$FAIL" = 1 ]; then
