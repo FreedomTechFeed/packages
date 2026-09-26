@@ -514,7 +514,7 @@ fi
 #     it, which would silently withhold the whole release;
 #   * publish must still depend on it (asserted above), so the ordering guarantee survives
 #     the moment bundles are switched back on.
-if grep -q 'expected-packages "\$VERSION"' "$RELEASE_WF"; then
+if grep -q 'EXPECT_ARGS="expected-packages"' "$RELEASE_WF" && grep -q 'release-assets\.py "\$EXPECT_ARGS"' "$RELEASE_WF"; then
   pass "preflight falls back to the package-only expected set when bundles are disabled"
 else
   fail "preflight cannot fall back to a package-only expected set (a disabled bundle would break publish)"
@@ -531,6 +531,25 @@ if [ "${gate_refs:-0}" -ge 4 ]; then
   pass "every bundle step is conditional on the gate ($gate_refs conditional steps)"
 else
   fail "only ${gate_refs:-0} bundle step(s) are conditional on the gate - a disabled bundle would still run steps"
+fi
+
+# --- the expected-asset output must contain ASSET NAMES ONLY --------------------------------
+# A workflow command echoed between "expected<<EXPECTED_ASSETS_EOF" and its EOF becomes part of
+# the output VALUE. That is how ":notice::OFFLINE_INSTALLER_REF is not set ..." once entered the
+# expected-asset list, making publish refuse with
+#   "release is missing expected asset(s): ::notice::..."
+EXPECTED_BODY=$(awk '/echo "expected<<EXPECTED_ASSETS_EOF"/{f=1;next} f && /echo "EXPECTED_ASSETS_EOF"/{exit} f' "$RELEASE_WF")
+if [ -z "$EXPECTED_BODY" ]; then
+  fail "could not locate the expected-assets heredoc in the release workflow"
+elif printf '%s\n' "$EXPECTED_BODY" | grep -qE '::(notice|warning|error)::'; then
+  fail "a workflow command is echoed inside the expected-assets heredoc - it becomes part of the output value"
+else
+  pass "no workflow command is echoed inside the expected-assets heredoc"
+fi
+if printf '%s\n' "$EXPECTED_BODY" | grep -qE 'release-assets\.py "\$EXPECT_ARGS"'; then
+  pass "the heredoc emits the chosen expected set in a single call"
+else
+  fail "the heredoc does not emit the chosen expected set in a single call"
 fi
 
 # ------------------------------------------------------------------ summary
