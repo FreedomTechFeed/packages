@@ -505,6 +505,34 @@ else
   pass "ordering control: the assertion fails when the download is moved after signing"
 fi
 
+# ------------------------------------------------- bundles disabled by variable
+# OFFLINE-BUNDLE-2 has not landed upstream yet, so a release must still be able to publish
+# its package assets. When OFFLINE_INSTALLER_REF is unset the bundle is disabled, and then:
+#   * the expected set must be packages-only, or the signed manifest would promise assets
+#     that do not exist and the publish guard would reject the release;
+#   * the bundle job must still RUN and SUCCEED - a SKIPPED job skips every job that needs
+#     it, which would silently withhold the whole release;
+#   * publish must still depend on it (asserted above), so the ordering guarantee survives
+#     the moment bundles are switched back on.
+if grep -q 'expected-packages "\$VERSION"' "$RELEASE_WF"; then
+  pass "preflight falls back to the package-only expected set when bundles are disabled"
+else
+  fail "preflight cannot fall back to a package-only expected set (a disabled bundle would break publish)"
+fi
+
+if awk '/^  offline-bundle:/ {f=1} f && /id: gate/ {print "gate"; exit}' "$RELEASE_WF" | grep -q gate; then
+  pass "the offline-bundle job has a gate step, so a disabled bundle no-ops instead of skipping publish"
+else
+  fail "the offline-bundle job has no gate step - a disabled bundle would skip publish entirely"
+fi
+
+gate_refs=$(grep -c 'steps.gate.outputs.enabled' "$RELEASE_WF" || true)
+if [ "${gate_refs:-0}" -ge 4 ]; then
+  pass "every bundle step is conditional on the gate ($gate_refs conditional steps)"
+else
+  fail "only ${gate_refs:-0} bundle step(s) are conditional on the gate - a disabled bundle would still run steps"
+fi
+
 # ------------------------------------------------------------------ summary
 echo "-----------------------------------------------------------------"
 echo "$PASS passed, $FAIL failed"

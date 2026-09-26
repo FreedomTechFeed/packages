@@ -80,6 +80,11 @@ jobs:
 
       - name: Derive the build matrix and the expected asset names
         id: assets
+        env:
+          # The WAN-less bundle needs OFFLINE-BUNDLE-2, which has not landed upstream yet.
+          # Unset -> the release ships package assets only, and the signed manifest must cover
+          # exactly those. Set -> bundles are built and their hashes join the manifest.
+          OFFLINE_ENABLED: ${{ vars.OFFLINE_INSTALLER_REF != '' }}
         run: |
           set -euo pipefail
           VERSION=$(grep '^PKG_VERSION:=' net/tollgate-wrt/Makefile | sed 's/^PKG_VERSION:=//')
@@ -91,7 +96,12 @@ jobs:
             echo "offline_matrix=$OFFLINE_MATRIX"
             echo "version=$VERSION"
             echo "expected<<EXPECTED_ASSETS_EOF"
-            python3 .github/workflows/scripts/release-assets.py expected "$VERSION"
+            if [ "${OFFLINE_ENABLED}" = "true" ]; then
+              python3 .github/workflows/scripts/release-assets.py expected "$VERSION"
+            else
+              echo "::notice::OFFLINE_INSTALLER_REF is not set - OFFLINE-BUNDLE-2 has not landed in OpenTollGate/physical-router-test-automation, so no offline bundle is built and the signed manifest covers the package assets only."
+              python3 .github/workflows/scripts/release-assets.py expected-packages "$VERSION"
+            fi
             echo "EXPECTED_ASSETS_EOF"
           } >> "$GITHUB_OUTPUT"
           echo "--- offline bundle matrix"
@@ -166,13 +176,30 @@ jobs:
     name: Build offline dependency bundle (${{ matrix.arch }})
     needs: [preflight, build]
     runs-on: ubuntu-latest
+    env:
+      OFFLINE_ENABLED: ${{ vars.OFFLINE_INSTALLER_REF != '' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.preflight.outputs.offline_matrix) }}
     steps:
+      # This job must RUN and SUCCEED even when the bundle is disabled: publish needs it, and a
+      # SKIPPED job skips publish entirely. It no-ops, declares why, and produces no artifact.
+      - name: Offline bundles enabled?
+        id: gate
+        run: |
+          set -euo pipefail
+          if [ "${OFFLINE_ENABLED}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::OFFLINE_INSTALLER_REF is not set - OFFLINE-BUNDLE-2 has not landed in OpenTollGate/physical-router-test-automation, so no offline bundle is built and the signed manifest covers the package assets only."
+          fi
+
       - uses: actions/checkout@v7
+        if: steps.gate.outputs.enabled == 'true'
 
       - name: Download the tollgate-wrt package for ${{ matrix.arch }}
+        if: steps.gate.outputs.enabled == 'true'
         uses: actions/download-artifact@v7
         with:
           name: tollgate-wrt-${{ matrix.arch }}-${{ matrix.ext }}
@@ -184,6 +211,7 @@ jobs:
       # whole pinned scripts/offline/ directory is fetched at a COMMIT (never a
       # branch) and the job fails closed when it cannot be fetched.
       - name: Fetch the pinned offline installer (OFFLINE-BUNDLE-2)
+        if: steps.gate.outputs.enabled == 'true'
         env:
           INSTALLER_REPO: OpenTollGate/physical-router-test-automation
           INSTALLER_PATH: scripts/offline
@@ -209,6 +237,7 @@ jobs:
           echo "installer commit: $(git rev-parse FETCH_HEAD)"
 
       - name: Resolve, verify and package the offline dependency bundle
+        if: steps.gate.outputs.enabled == 'true'
         run: |
           set -euo pipefail
           TOLLGATE_APK=$(find staged -maxdepth 2 -type f -name 'tollgate-wrt_*.apk' | head -n1)
@@ -230,6 +259,7 @@ jobs:
           ls -lh out/
 
       - name: Upload the offline bundle artifact
+        if: steps.gate.outputs.enabled == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: offline-bundle-${{ matrix.arch }}
@@ -259,6 +289,9 @@ jobs:
       # are already staged here. offline-bundle-test.sh asserts this ordering,
       # including against a mutated copy of this file.
       - name: Download the offline bundles
+        # Skipped when bundles are disabled: the artifact set is empty and download-artifact
+        # treats that as an error.
+        if: ${{ vars.OFFLINE_INSTALLER_REF != '' }}
         uses: actions/download-artifact@v7
         with:
           pattern: offline-bundle-*
