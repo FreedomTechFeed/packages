@@ -144,19 +144,40 @@ PKG_NAME:=tollgate-wrt
 # pre18 does BOTH things the pre17 hardware acceptance demanded, and nothing
 # else: it moves the pin and it fixes the install sequence.
 #
-# (1) The pin moves to cfbfff5a — module main TIP (0 commits behind main; 27
-# commits past the v0.6.0-alpha4 tag), replacing 2796d96c, and PKG_HASH is
+# (1) The pin moves to 33186bb3 — module main TIP (0 commits behind main; 9
+# commits past the cfbfff5a pin #29 merged, 2796d96c before it), and PKG_HASH is
 # recomputed for it. The hash is not a chore bolted on: it IS the identity of
 # what every gate below measures, and test-pkg-tarball-parity.sh Gate A fails a
-# pin move whose hash was not recalibrated. Tarball sha256 at cfbfff5a:
-# 69e3910a33b75c6221e3b0c62a7d1c76683f88f7c8d0651db8ebe686adb54a47 (codeload,
-# PKG_SOURCE_URL below). PKG_SOURCE_TAG stays v0.6.0-alpha4 — the repo-root
-# VERSION file at cfbfff5a is still v0.6.0-alpha4 (Gate B re-checks it) — and the
-# lock stays the deliberate one-commit-ahead pin described below: the module's
-# declared .portal.commit at cfbfff5a is STILL e6fe0e0e, unchanged from
-# 2796d96c. The pin carries #579 (nodogsplash reload), #578 (order-aware setup
-# marker), #563 (the router happy-path harness this round ran on hardware),
-# #561, #572, #539 and #519.
+# pin move whose hash was not recalibrated. Tarball sha256 at 33186bb3:
+# 872892c066cdefd340b3d0f140ad4815e2375165e3130a0d4efbeb05a5568279 (codeload,
+# PKG_SOURCE_URL below). Those 9 commits ARE the pre18 content: #588 (a guest is
+# answered by the portal, never by LuCI — the new 32-luci-not-guest-reachable.nft
+# plus setup_uhttpd_trusted_entry), #593 (provision the router's TLS identity at
+# setup, and require a covering certificate for redirect_https), #595 (a
+# forgotten client is a completed close — the nodogsplash socket-wedge fix), #589
+# (bind and serve :2121 before any mint-dependent init), #591, #590, #585, #592,
+# #577. Without this move the release tag would ship bytes from before all of
+# them. PKG_SOURCE_TAG stays v0.6.0-alpha4 — the repo-root VERSION file at
+# 33186bb3 is still v0.6.0-alpha4 (Gate B re-checks it) — and the lock stays the
+# deliberate one-commit-ahead pin described below: the module's declared
+# .portal.commit at 33186bb3 is STILL e6fe0e0e, unchanged from 2796d96c and from
+# cfbfff5a.
+#
+# (1b) The pin move needs NO recipe re-sync, and that is a measured result, not
+# an assumption. packaging/ changed in four of the nine commits and every change
+# is of a kind the recipe already consumes structurally: the two files they ADD
+# (etc/nftables.d/32-luci-not-guest-reachable.nft and man/man8/tollgate-ssl-covers.8)
+# are staged by the wildcards in the install recipe (never a hand-kept list —
+# the pre16 defect), the files they CHANGE (etc/init.d/tollgate-wrt,
+# etc/uci-defaults/99-tollgate-setup and the two ssl man pages) are installed
+# verbatim out of the tarball, and packaging/Makefile's Package/<name>/postinst
+# body — the sequence Package/tollgate-wrt/postinst is a verbatim copy of — is
+# byte-identical at both pins (sha256
+# 1a2b9e62e4e91ce36b2640c23a7b9ce01e41c81164a4d3e5ed498a5e1f9cf5fc), so the copy
+# stays a copy. test-pkg-tarball-parity.sh Gate I compares the two bodies at the
+# pin on every run, so this claim is enforced rather than asserted. No new
+# dependency either: the DEPENDS line is unchanged and the new 99-tollgate-setup
+# reaches the TLS identity through `tollgate ssl` (the Go CLI), not openssl.
 #
 # (2) pre17's postinst ran the three uci-defaults scripts and restarted ONLY
 # /etc/init.d/tollgate-wrt. Those scripts write config; on an install onto a
@@ -231,10 +252,16 @@ PKG_VERSION:=0.6.0_alpha4_pre18
 # already in the 2796d96c tarball, so a module change would have been
 # unnecessary churn on a community feed (see the pre17 block above). pre18 MOVES
 # the pin and the hash together and leaves PKG_SOURCE_TAG and the portal lock
-# alone, for the reasons in the pre18 block above.
+# alone, for the reasons in the pre18 block above. The pre18 pin moved twice
+# inside one unreleased version: #29 merged it at cfbfff5a, and this change takes
+# it to 33186bb3, the module main TIP that carries the rest of the pre18 content.
+# Re-using the version string is deliberate and safe: release-publish.yml is
+# tag-triggered, no v0.6.0-alpha4-pre18 tag or asset exists (the newest published
+# release is v0.6.0-alpha4-pre17), and nothing is offered to a device until that
+# tag is cut — so `0.6.0_alpha4_pre18` still names exactly one set of bytes.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=cfbfff5a9e6aa1de03dda783e9b930d9c36e0bf9
+PKG_SOURCE_VERSION:=33186bb39451abf1e879be84886b6705542787b2
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -300,13 +327,22 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # reproduces 132ebf00… — and test-pkg-tarball-parity.sh Gate A now compares the
 # tarball's sha256 against this variable on every run, so a future pin bump that
 # forgets to recalibrate fails a test instead of failing the SDK download.
+# pre18 re-calibrated on the second half of its pin move exactly as the earlier
+# bumps did: replaying the identical construction for the OUTGOING pin (cfbfff5a)
+# reproduced that pin's committed
+# 69e3910a33b75c6221e3b0c62a7d1c76683f88f7c8d0651db8ebe686adb54a47 exactly, so
+# the same construction for 33186bb3 yields
+# 872892c066cdefd340b3d0f140ad4815e2375165e3130a0d4efbeb05a5568279 — the value
+# committed below (the recorded command output is in this PR's body). It was
+# re-downloaded a second time and hashed to the same value, which is the
+# immutability the pin relies on.
 # Note the Makefile carries exactly ONE PKG_SOURCE_URL form. The two plausible
 # variants were tried and rejected (command output in the PR body): the same URL
 # WITHOUT the '?' requests `.../tar.gz/<sha>/<name>` and 404s, and the tag form
 # `.../tar.gz/v0.6.0-alpha4?` resolves 200 but hashes DIFFERENTLY
 # (28d63edb…), i.e. it is not the commit tarball this pin builds from.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=69e3910a33b75c6221e3b0c62a7d1c76683f88f7c8d0651db8ebe686adb54a47
+PKG_HASH:=872892c066cdefd340b3d0f140ad4815e2375165e3130a0d4efbeb05a5568279
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
