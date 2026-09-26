@@ -528,6 +528,67 @@ else
 	echo "Warning: /etc/init.d/tollgate-wrt not found, skipping service start" >&2
 fi
 
+#
+# --- readiness gate: the install is not "done" until the API answers -------
+#
+# Everything above WRITES config and starts the daemon. None of it waits for the
+# daemon to serve, and the two are not the same thing. tollgate-wrt does its
+# startup mint probe BEFORE it binds, so :2121 and /var/run/tollgate.sock do not
+# exist until that probe returns; on a cold box every probe burns its full
+# client timeout, and procd's `status` says "running" the whole time because it
+# reports the PROCESS, not the API. Measured on the bench MT3000 (pre17, fresh
+# install + reboot): `status` running, :2121 absent, /var/run/tollgate.sock
+# missing, `tollgate wallet balance` failing with ENOENT — and then `PASS TCP
+# 2121` minutes later with no change made. That is the window this gate closes
+# for the install path: the operator (or an automated acceptance run) is told
+# when the money path is actually up, and is told loudly when it is not.
+#
+# WHY IT DOES NOT FAIL THE INSTALL: a package that installed correctly must not
+# be rolled back because the uplink was slow to come up or a mint was not
+# answering yet. The gate reports; the operator decides. What it must never do
+# is stay SILENT, which is what the pre17/pre18 postinst did.
+#
+# The wait is bounded at 240 s: comfortably over the worst case the shipped
+# startup probe allows (7 accepted mints x the 30 s probeTimeout = 210 s), and
+# it costs nothing when the API answers immediately, which is the normal
+# install: the first probe succeeds and the loop exits before its first sleep.
+tollgate_api_listening() {
+	if command -v netstat >/dev/null 2>&1; then
+		netstat -tln 2>/dev/null | grep -q ":2121 "
+	elif command -v ss >/dev/null 2>&1; then
+		ss -tln 2>/dev/null | grep -q ":2121 "
+	elif command -v wget >/dev/null 2>&1; then
+		wget -q -O /dev/null -T 2 "http://127.0.0.1:2121/" 2>/dev/null
+	elif command -v curl >/dev/null 2>&1; then
+		curl -s -o /dev/null -m 2 "http://127.0.0.1:2121/" 2>/dev/null
+	else
+		return 1
+	fi
+}
+
+tollgate_ready_waited=0
+while [ "$$tollgate_ready_waited" -lt 240 ]; do
+	tollgate_api_listening && break
+	sleep 5
+	tollgate_ready_waited=$$((tollgate_ready_waited + 5))
+done
+
+if tollgate_api_listening; then
+	echo "tollgate-wrt: API answering on :2121 after $${tollgate_ready_waited}s"
+elif [ -x /etc/init.d/tollgate-wrt ]; then
+	echo "Warning: tollgate-wrt has not bound :2121 after $${tollgate_ready_waited}s." >&2
+	echo "  The package IS installed and the service IS enabled; the money path is" >&2
+	echo "  NOT serving yet. Check whether the daemon is alive and still probing:" >&2
+	echo "    ps w | grep [t]ollgate-wrt                      # process alive?" >&2
+	echo "    logread | grep -i RunInitialProbe | tail -5     # still probing mints?" >&2
+	echo "    netstat -tln | grep :2121                       # port bound?" >&2
+	echo "    ls -l /var/run/tollgate.sock                    # CLI socket?" >&2
+	echo "  A cold boot with no uplink makes every mint probe burn its full 30 s" >&2
+	echo "  timeout, so this can take minutes; it recovers on its own, and the" >&2
+	echo "  aggressive 15 s probe loop brings the merchant up as soon as a mint" >&2
+	echo "  answers." >&2
+fi
+
 exit 0
 endef
 
