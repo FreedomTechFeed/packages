@@ -91,23 +91,28 @@ jobs:
           echo "PKG_VERSION=$VERSION"
           MATRIX=$(python3 .github/workflows/scripts/release-assets.py matrix)
           OFFLINE_MATRIX=$(python3 .github/workflows/scripts/release-assets.py offline-matrix)
+          # A workflow command (:notice:/:warning:/:error:) must NEVER be echoed between a
+          # "name<<EOF" marker and its terminating EOF: everything in between becomes part of
+          # the output VALUE. A notice emitted there once entered the expected-asset list, so
+          # publish refused with "release is missing expected asset(s): ::notice::...".
+          if [ "${OFFLINE_ENABLED}" = "true" ]; then
+            EXPECT_ARGS="expected"
+          else
+            echo "::notice::OFFLINE_INSTALLER_REF is not set - OFFLINE-BUNDLE-2 has not landed in OpenTollGate/physical-router-test-automation, so no offline bundle is built and the signed manifest covers the package assets only."
+            EXPECT_ARGS="expected-packages"
+          fi
           {
             echo "matrix=$MATRIX"
             echo "offline_matrix=$OFFLINE_MATRIX"
             echo "version=$VERSION"
             echo "expected<<EXPECTED_ASSETS_EOF"
-            if [ "${OFFLINE_ENABLED}" = "true" ]; then
-              python3 .github/workflows/scripts/release-assets.py expected "$VERSION"
-            else
-              echo "::notice::OFFLINE_INSTALLER_REF is not set - OFFLINE-BUNDLE-2 has not landed in OpenTollGate/physical-router-test-automation, so no offline bundle is built and the signed manifest covers the package assets only."
-              python3 .github/workflows/scripts/release-assets.py expected-packages "$VERSION"
-            fi
+            python3 .github/workflows/scripts/release-assets.py "$EXPECT_ARGS" "$VERSION"
             echo "EXPECTED_ASSETS_EOF"
           } >> "$GITHUB_OUTPUT"
           echo "--- offline bundle matrix"
           echo "$OFFLINE_MATRIX"
-          echo "--- expected assets"
-          python3 .github/workflows/scripts/release-assets.py expected "$VERSION"
+          echo "--- expected assets (as chosen)"
+          python3 .github/workflows/scripts/release-assets.py "$EXPECT_ARGS" "$VERSION"
 
   build:
     name: Build ${{ matrix.arch }} (${{ matrix.sdk }})
