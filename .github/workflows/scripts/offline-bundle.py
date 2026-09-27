@@ -103,6 +103,36 @@ APK_STATIC_SHA256 = "673f1bfb22136fc42ca035321cf731a4ad0452c000928666cb39a138f0c
 MANIFEST_NAME = "MANIFEST.sha256"
 INSTALLER_NAME = "install-offline.sh"
 
+# The router-side management keepalive seed, relative to the bundle root. It
+# ships INSIDE the bundle (copied from the pinned installer directory) and is
+# applied by install-router.sh BEFORE anything can start enforcing. On a
+# freshly flashed box /etc/config/nodogsplash does not exist yet, so a seed that
+# resolves the anonymous section @nodogsplash[0] cannot land its add_list calls
+# (real `uci` exits non-zero; the seed ignores errors and still exits 0) and the
+# installer's own keepalive_applied gate then refuses with exit 5 — a bundle
+# refused by the gate for a package the bundle itself delivers. The builder
+# therefore guarantees the shipped seed can create the section it needs.
+KEEPALIVE_REL = "templates/99z-mgmt-keepalive"
+
+# Marker: this substring in a seed already means "create the section when it is
+# absent", so the repair below is idempotent.
+KEEPALIVE_FRESHBOX_MARK = \
+    "uci -q get nodogsplash.@nodogsplash[0] >/dev/null 2>&1"
+
+KEEPALIVE_FRESHBOX_GUARD = """\
+# --- fresh-box guard (added by the offline bundle builder) -------------------
+# A freshly flashed box has NO /etc/config/nodogsplash yet, so the anonymous
+# section @nodogsplash[0] cannot be resolved here and the add_list calls below
+# would land nothing (this script ignores errors and still exits 0).
+# install-router.sh asserts this pre-auth trust is LIVE *before* it installs
+# anything and otherwise refuses with exit 5, so the seed itself has to be able
+# to create the section it needs — otherwise the bundle's own safety gate
+# refuses a first flash for a package the bundle is carrying.
+if ! uci -q get nodogsplash.@nodogsplash[0] >/dev/null 2>&1; then
+    uci add nodogsplash nodogsplash
+fi
+"""
+
 
 class Fail(Exception):
     """Fail-closed condition: the caller must exit non-zero and say why."""
@@ -976,6 +1006,64 @@ this bundle or already in the base image.
        len(payload["stubbed"]), stubs, installer_note)
 
 
+def repair_keepalive_seed(bundle_dir):
+    """Make the bundle's management keepalive seed FRESH-BOX safe.
+
+    Returns a one-line note for the installer provenance block, or "" when the
+    bundle carries no seed (the router-side installer refuses such a bundle, and
+    the release job asserts the seed is present before it gets here).
+
+    On a freshly flashed box `/etc/config/nodogsplash` is ABSENT until the
+    nodogsplash package is installed, which happens AFTER this seed is applied.
+    A seed that goes straight to `uci add_list nodogsplash.@nodogsplash[0].<opt>`
+    cannot resolve the anonymous section there: real `uci` exits non-zero, the
+    seed ignores errors (it ends `exit 0`), and `assert_keepalive_live()` in
+    install-router.sh then finds no trustedmac / no `allow tcp port 22` and
+    REFUSES with exit 5 before installing anything. That is the chicken-and-egg:
+    the installer's pre-install safety gate depends on the package the bundle
+    delivers. Measured on the bench MT3000 (fresh flash, OpenWrt 25.12.5,
+    2026-09-27 wave 3); an UPGRADE passes, which is why only the fresh flash saw
+    it.
+
+    The repair inserts the section-ensure guard immediately before the seed's
+    first nodogsplash `uci` call, so the seed creates the section it needs. It is
+    idempotent: a seed that already carries the guard is left byte-for-byte.
+    """
+    path = os.path.join(bundle_dir, KEEPALIVE_REL)
+    if not os.path.isfile(path):
+        return ""
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    if KEEPALIVE_FRESHBOX_MARK in text:
+        log("keepalive seed already creates the anonymous nodogsplash section "
+            "(fresh-box safe): %s left unchanged" % KEEPALIVE_REL)
+        return ("seed: fresh-box safe (carries the section guard), sha256 %s"
+                % sha256_file(path))
+    lines = text.splitlines(keepends=True)
+    idx = None
+    for i, line in enumerate(lines):
+        if "uci" in line and "nodogsplash" in line:
+            idx = i
+            break
+    if idx is None:
+        raise Fail(
+            "the management keepalive seed (%s) never touches nodogsplash, so "
+            "applying it cannot establish the pre-auth trust (trustedmac + "
+            "'allow tcp port 22') the router-side installer asserts before it "
+            "installs anything — it is not a keepalive seed. Refusing to ship "
+            "it." % KEEPALIVE_REL)
+    lines[idx:idx] = [KEEPALIVE_FRESHBOX_GUARD]
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("".join(lines))
+    os.chmod(path, 0o755)
+    log("keepalive seed: inserted the fresh-box section guard before line %d "
+        "of %s — a box with no /etc/config/nodogsplash can now establish the "
+        "pre-auth trust the router-side installer asserts"
+        % (idx + 1, KEEPALIVE_REL))
+    return ("seed: fresh-box guard inserted (creates the anonymous nodogsplash "
+            "section when absent), sha256 %s" % sha256_file(path))
+
+
 def cmd_assemble(args):
     bundle_name = "tollgate-wrt-%s-%s-offline" % (args.pkg_version, _arch_of(args))
     out_dir = os.path.abspath(args.out)
@@ -1028,12 +1116,15 @@ def cmd_assemble(args):
                 shutil.copy2(src, dest)
                 os.chmod(dest, os.stat(src).st_mode & 0o777)
                 installer_files.append(rel)
+        seed_note = repair_keepalive_seed(bundle_dir)
         installer_note = ("installer (pinned, from OFFLINE-BUNDLE-2 / "
                           "OpenTollGate/physical-router-test-automation "
                           "scripts/offline/): %d file(s), install-offline.sh "
                           "sha256 %s"
                           % (len(installer_files),
                              sha256_file(os.path.join(bundle_dir, INSTALLER_NAME))))
+        if seed_note:
+            installer_note += "\n" + seed_note
     elif installer:
         if not os.path.isfile(installer):
             raise Fail("--installer %s does not exist" % installer)
