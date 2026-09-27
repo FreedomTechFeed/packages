@@ -28,6 +28,6 @@
     "net/tollgate-wrt/files/tollgate-admin/assets/brand/tollgate/icon-white.png": "8158a4129b307802e8bc7ae3b34cfee92c09142d9a639690673e94cdf38cff35",
     "net/tollgate-wrt/files/rpcd/tollgate_acl.json": "7c1637beb80c48bcbae9d357013cf9db04c140c764ac643978184e3298697b6e"
   },
-  "portal_commit": "4c092e086f6bf0643851693aa6956351a6fb4036",
+  "portal_commit": "415803039df3da18f98554fe1cf93d6887a061a6",
   "portal_repo": "OpenTollGate/tollgate-captive-portal-site"
 }
