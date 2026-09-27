@@ -248,11 +248,18 @@ ROUTER_INSTALLER_FINGERPRINT = ("TGOFFLINE_VERSION=", "apk add --no-network")
 # The stage-(2) dependency-install region is located SEMANTICALLY: from the line
 # that announces stage (2) (`=== (2) dependency packages ...`) up to and
 # including that stage's `gate_pass deps_installed` line. No comment, marker or
-# exact text block is involved, so upstream may reword comments or reindent
-# freely without changing the guard's verdict.
+# exact text block is involved, so upstream may reword or drop COMMENTS and
+# reindent — both regexes tolerate leading whitespace — without changing the
+# verdict. The banner wording and the gate NAME are a pinned interface: a
+# reworded banner or a renamed gate is a deliberate re-pin event and fails closed
+# (region is None) instead of being guessed at.
 DEP_STAGE_BANNER_RE = re.compile(
     r"\(\s*2\s*\)[^\n]*dependenc|dependenc[^\n]*\(\s*2\s*\)", re.IGNORECASE)
 DEP_STAGE_END_RE = re.compile(r"^\s*gate_pass\s+deps_installed\b", re.MULTILINE)
+
+# The package under test is the bundle's own tollgate-wrt apk; stage (3) installs
+# it on its own, so the dep-stage provenance note counts the OTHER staged files.
+ROUTER_PKG_PREFIX = "tollgate-wrt_"
 
 
 class Fail(Exception):
@@ -1204,18 +1211,101 @@ def repair_keepalive_seed(bundle_dir):
             % (missing, sha256_file(path)))
 
 
+# --- the dep-stage guard's shell reader --------------------------------------
+# The guard must judge what the stage EXECUTES, and nothing else, so it reads the
+# shell rather than matching a bag of tokens: comments and here-doc bodies are
+# not code and are dropped, a mention of `apk add` inside a string is not a
+# command, and only a REAL command's own argument list is judged.
+
+
+def _scan_shell_line(line):
+    """Return (code, heredocs) for one raw shell line.
+
+    `code` is `line` with any COMMENT removed — a word-initial `#` outside quotes
+    (shell's own rule, which leaves `${x#y}`, `$#` and `a#b` intact) and
+    everything after it. `heredocs` lists (delimiter, dash) for every here-doc
+    redirection announced on the line, in order.
+    """
+    out = []
+    heredocs = []
+    i, n = 0, len(line)
+    sq = dq = False
+    while i < n:
+        ch = line[i]
+        if ch == "\\" and not sq:
+            out.append(line[i:i + 2])
+            i += 2
+            continue
+        if ch == "'" and not dq:
+            sq = not sq
+        elif ch == '"' and not sq:
+            dq = not dq
+        elif not sq and not dq:
+            if ch == "#" and (i == 0 or line[i - 1] in " \t;&|("):
+                break                        # a comment: the rest is not code
+            if line.startswith("<<", i):
+                m = re.match(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1",
+                             line[i:])
+                if m:
+                    heredocs.append((m.group(2), m.group(0).startswith("<<-")))
+                    out.append(m.group(0))
+                    i += m.end()
+                    continue
+        out.append(ch)
+        i += 1
+    return "".join(out), heredocs
+
+
+def _shell_code_lines(text):
+    """Return `text`'s executable lines: comments and here-doc BODIES removed.
+
+    A here-doc body (and its terminator line) is data, never executed, so it
+    contributes no words to the guard's judgement — a compliant `apk add` quoted
+    inside a `cat <<'DOC'` example can therefore never stand in for the real one.
+    """
+    kept = []
+    queue = []                    # here-docs announced whose bodies are pending
+    for raw in text.splitlines():
+        if queue:
+            delim, dash = queue[0]
+            if (raw.lstrip("\t") if dash else raw) == delim:
+                queue.pop(0)                     # terminator: not code either
+            continue                             # body line: data, not code
+        code, heredocs = _scan_shell_line(raw)
+        kept.append(code)
+        queue.extend(heredocs)
+    return kept
+
+
+def _join_continuations(lines):
+    """Join backslash-continued lines into logical lines."""
+    out = []
+    buf = ""
+    for ln in lines:
+        buf = (buf + " " + ln.strip()).strip() if buf else ln.strip()
+        if buf.endswith("\\"):
+            buf = buf[:-1].rstrip()
+            continue
+        if buf:
+            out.append(buf)
+        buf = ""
+    if buf:
+        out.append(buf)
+    return out
+
+
 def _normalise_sh(text):
     """Return `text` as a comment-free, whitespace-collapsed shell token stream.
 
-    The dep-stage guard must be blind to comments and to whitespace-only
-    differences: upstream may reword or drop any comment (this builder's own
-    marker comment was copied verbatim into the upstream fix and survives today,
-    but nothing may depend on that), and a reindent must not change the verdict.
-    Dropping full-line comments and collapsing every whitespace run to one space
-    leaves the sequence of shell WORDS, which is what the guard judges.
+    The dep-stage guard judges the WORDS the stage executes. Both full-line and
+    TRAILING comments are dropped (a `#` outside quotes, at the start of a word),
+    as are here-doc bodies — none of them is executed — and every whitespace run
+    collapses to one space, so upstream may reword or drop any comment, reindent,
+    or put `do` on its own line without changing the verdict. What the guard is
+    NOT blind to is the pinned banner/gate interface (see dep_stage_region) or a
+    genuinely reworded shell.
     """
-    kept = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
-    return " ".join(" ".join(kept).split())
+    return " ".join(" ".join(_shell_code_lines(text)).split())
 
 
 def dep_stage_region(text):
@@ -1225,10 +1315,18 @@ def dep_stage_region(text):
     `=== (2) dependency packages ...`) up to and INCLUDING that stage's
     `gate_pass deps_installed` line. It is found by the banner and the gate line
     alone — never by a comment, a marker or an exact text block.
+
+    The banner wording and the gate name are a PINNED INTERFACE of this guard:
+    both regexes tolerate leading whitespace (a reindent must not change the
+    verdict) and a comment line is never taken for the banner, but a REWORDED
+    banner or a RENAMED gate is a deliberate re-pin event and fails closed here
+    (region is None) rather than being guessed at.
     """
     lines = text.splitlines()
     start = None
     for i, line in enumerate(lines):
+        if line.lstrip().startswith("#"):
+            continue                     # a comment cannot announce the stage
         if DEP_STAGE_BANNER_RE.search(line):
             start = i
             break
@@ -1240,58 +1338,216 @@ def dep_stage_region(text):
     return None
 
 
-def _dep_stage_offers_closure(norm):
-    """Judge a NORMALISED stage-(2) region. Returns (ok, why_not).
+def _ref(name):
+    """A shell expansion of `name`: `$name` or `${name}` (both spellings)."""
+    return r"(?:\$\{%s\}|\$%s\b)" % (name, name)
+
+
+# A shell WORD (no separator) that contains a $ref: quotes, an `x`-prefix and
+# brace forms are all accepted, because they are all the same comparison.
+_REF = r"[^\s;|&()]*\$\{?%s\}?[^\s;|&()]*"
+
+_CMD_START_RE = re.compile(
+    r"(?:^|[;&|]\s*|(?:^|\s)!\s*"
+    r"|\b(?:if|elif|while|until|then|else|do)\s+!?\s*)$")
+_APK_ADD_RE = re.compile(r"\bapk\s+add\b")
+# `[ "$rc" != 0 ]` / `[ "${rc}" -ne "0" ]` — the gate on the captured status.
+_GATE_TEST_RE = re.compile(
+    r"\[\s*\"?\$\{?(\w+)\}?\"?\s*(?:!=|-ne)\s*\"?0\"?\s*\]")
+# `if apk add …; then …; else rc=$?; fi` — an else-branch capture (F3): no `||`,
+# but still apk's own status, from apk's own command.
+_IF_ELSE_CAPTURE_RE = re.compile(
+    r"\bif\s+apk\s+add\b[^;]*;?\s*then\b.*?\belse\s+(\w+)=\$\?")
+
+
+def _command_end(text, start):
+    """Offset of the end of the simple command that begins at `start`."""
+    i, n = start, len(text)
+    sq = dq = False
+    while i < n:
+        ch = text[i]
+        if ch == "\\" and not sq:
+            i += 2
+            continue
+        if ch == "'" and not dq:
+            sq = not sq
+        elif ch == '"' and not sq:
+            dq = not dq
+        elif not sq and not dq and ch in ";|&":
+            return i
+        i += 1
+    return n
+
+
+def _apk_add_commands(logical):
+    """The REAL `apk add` commands of a stage: [(args, captured_rc_var), ...].
+
+    A command is a word-initial `apk add` — at the start of a logical line, after
+    a separator (`;`, `&&`, `||`, `|`) or after a keyword (`if`, `then`, `do`,
+    `else`, `elif`, `while`, `until`), optionally negated by `!`. An `apk add`
+    that is only MENTIONED — inside a string, e.g.
+    `apk_deps_cmd="apk add … $dep_files"`, or echoed to the log — is not a
+    command and cannot stand in for one.
+
+    `captured_rc_var` is the variable that captures THIS command's own status
+    (`apk add … || rc=$?`, or `rc=$?` on the very next statement), or None.
+    """
+    cmds = []
+    for idx, line in enumerate(logical):
+        for m in _APK_ADD_RE.finditer(line):
+            if not _CMD_START_RE.search(line[:m.start()]):
+                continue                            # a mention, not a command
+            end = _command_end(line, m.end())
+            tail = line[end:]
+            cap = re.match(r"\s*(?:\|\||;)\s*(\w+)=\$\?", tail)
+            var = cap.group(1) if cap else None
+            if var is None and idx + 1 < len(logical):
+                nxt = re.match(r"\s*(\w+)=\$\?\s*;?\s*$", logical[idx + 1])
+                var = nxt.group(1) if nxt else None
+            cmds.append((line[m.end():end], var))
+    return cmds
+
+
+def _has_glob(args):
+    """True if an UNQUOTED `*`/`?` glob sits in an argument list.
+
+    A glob is not a closure: `apk add … "$PKG_DIR"/*.apk` sweeps the package
+    under test back in and defeats the exclusion, while the (dead) loop still
+    looks compliant.
+    """
+    sq = dq = False
+    i, n = 0, len(args)
+    while i < n:
+        ch = args[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'" and not dq:
+            sq = not sq
+        elif ch == '"' and not sq:
+            dq = not dq
+        elif not sq and not dq and ch in "*?":
+            return True
+        i += 1
+    return False
+
+
+def _excludes_package_under_test(body, var):
+    """True if the $STAGED_APKS loop body rules out the package under test.
+
+    Any correct spelling is accepted: `[ "$f" != "$PKG_APK" ]`,
+    `[ "$f" = "$PKG_APK" ] && continue`, `test …`, `case "$f" in "$PKG_APK")
+    continue`, and the `${VAR}` brace forms.
+    """
+    v = re.escape(var)
+    neq = re.compile(r"(?:\[|\btest\b)\s+%s\s+(?:!=|-ne)\s+%s"
+                     % (_REF % v, _REF % "PKG_APK"))
+    eq = re.compile(r"(?:\[|\btest\b)\s+%s\s+(?:==|=)\s+%s"
+                    % (_REF % v, _REF % "PKG_APK"))
+    case_word = re.compile(r"\bcase\s+%s\s+in\b" % (_REF % v))
+    case_arm = re.compile(r"%s\s*\)\s*(?:continue\b|;)" % (_REF % "PKG_APK"))
+    if neq.search(body):
+        return True
+    if eq.search(body) and re.search(r"\bcontinue\b", body):
+        return True
+    if case_word.search(body) and case_arm.search(body) \
+            and re.search(r"\bcontinue\b", body):
+        return True
+    return False
+
+
+def _dep_stage_offers_closure(region):
+    """Judge the stage-(2) region text. Returns (ok, why_not).
 
     `why_not` is a human-readable reason on failure so the guard can say what it
-    expected and what it found. The three things this asserts, all by behaviour:
+    expected and what it found. The things it asserts, all by behaviour:
 
       1. the package list is built from the WHOLE staged set (`for ... in
          $STAGED_APKS`) and NOT from the top-level deps, excluding the package
          under test (stage (3) installs it on its own, after the keepalive
          assertion, so the no-brick ordering is unchanged);
-      2. the gate reports apk's OWN rc, captured from the apk add command, not
+      2. the REAL `apk add` COMMAND — the one the stage executes, not a mention
+         in a string, an inline comment or a here-doc — is offered that
+         loop-built list, and is NOT offered the top-level dep names or an
+         unquoted `*.apk` glob (a glob sweeps the package under test back in and
+         defeats the exclusion);
+      3. the gate reports apk's OWN rc, captured from THAT command (`|| rc=$?`,
+         an `else`-branch capture, or an assignment on the next statement), not
          `$?` read inside `if !` (which is the NEGATION's status, 0).
     """
+    logical = _join_continuations(_shell_code_lines(region))
+    norm = _normalise_sh(region)
+
     # (a) it must not still enumerate the top-level deps instead of the closure.
     for top in ("REQUIRED_DEPS", "STUB_OK_DEPS"):
-        if re.search(r"for\s+\w+\s+in\s+\$%s\b" % top, norm):
+        if re.search(r"\bfor\s+\w+\s+in\s+" + _ref(top), norm):
             return False, ("it still enumerates $%s, i.e. it names only the "
                            "top-level deps rather than the whole staged "
                            "closure" % top)
 
     # (b) the file list must be built from the whole staged set ...
-    loop = re.search(r"for\s+(\w+)\s+in\s+\$STAGED_APKS\s*;\s*do", norm)
+    loop = re.search(r"\bfor\s+(\w+)\s+in\s+" + _ref("STAGED_APKS"), norm)
     if not loop:
         return False, ("it never iterates $STAGED_APKS, so it cannot offer the "
                        "whole staged closure to apk")
-    var = re.escape(loop.group(1))
+    var = loop.group(1)
+    done = norm.find("done", loop.end())
+    body = norm[loop.end():done if done != -1 else len(norm)]
     # ... excluding the package under test (installed separately by stage (3)).
-    if not re.search(r"\[\s*\"\$%s\"\s*!=\s*\"\$PKG_APK\"\s*\]" % var, norm):
+    if not _excludes_package_under_test(body, var):
         return False, ("its $STAGED_APKS loop variable (%s) is never compared "
                        "against \"$PKG_APK\", so the package under test is not "
-                       "excluded from the dependency transaction"
-                       % loop.group(1))
+                       "excluded from the dependency transaction" % var)
+    # ... and the list variable the loop BUILDS is what apk must be offered.
+    acc = re.search(r"(?<![\w$])(\w+)=[^;|&]*?" + _ref(var), body)
+    list_var = acc.group(1) if acc else None
+    offered = [r for r in (list_var, "STAGED_APKS") if r]
 
-    # (c) the gate must report apk's OWN rc, captured from the command ...
-    cap = re.search(r"\|\|\s*(\w+)=\$\?", norm)
-    if not cap:
+    # (c) the REAL apk add command(s): at least one must exist, and every one the
+    #     stage executes must be offered the closure and nothing else.
+    cmds = _apk_add_commands(logical)
+    if not cmds:
+        return False, ("it never runs an `apk add` command, so nothing is ever "
+                       "offered the staged closure (a `|| rc=$?` attached to "
+                       "some other command is not an apk install)")
+    for args, _var in cmds:
+        for top in ("REQUIRED_DEPS", "STUB_OK_DEPS"):
+            if re.search(_ref(top), args):
+                return False, ("the `apk add` command it runs is offered $%s "
+                               "instead of the whole staged closure — that is "
+                               "the stage that refuses on a fresh box" % top)
+        if _has_glob(args):
+            return False, ("the `apk add` command it runs is offered an "
+                           "unquoted glob, which sweeps in the package under "
+                           "test and defeats its exclusion")
+        if not any(re.search(_ref(r), args) for r in offered):
+            return False, ("the `apk add` command it runs is not offered the "
+                           "list the $STAGED_APKS loop builds (%s), so the loop "
+                           "is dead and the closure never reaches apk"
+                           % (list_var or loop.group(1)))
+
+    # (d) the gate must report apk's OWN rc, captured from that command ...
+    captures = set(v for _a, v in cmds if v)
+    for m in _IF_ELSE_CAPTURE_RE.finditer(norm):
+        captures.add(m.group(1))
+    if not captures:
         return False, ("it does not capture apk's own status from the apk add "
-                       "command (`|| <rc>=$?`)")
-    rc = re.escape(cap.group(1))
-    if not re.search(r"\[\s*\"\$%s\"\s*!=\s*0\s*\]" % rc, norm):
-        return False, ("it captures %s but never gates on it" % cap.group(1))
-    if not re.search(r"rc=\$%s\b" % rc, norm):
-        return False, ("its failure report does not print the captured rc (%s)"
-                       % cap.group(1))
-    # ... and it must not read `$?` inside `if ! cmd` (that is the negation's 0).
-    # `(?<!\w)` keeps this from matching the tail of a captured `..._rc=$?`.
-    if re.search(r"(?<!\w)rc=\$\?", norm):
-        return False, ("its failure report still reads `$?` inside `if !`, which "
-                       "is the NEGATION's status (0), not apk's")
-    if re.search(r"if\s+!\s*apk\s+add\b", norm):
+                       "command (`|| <rc>=$?`, an `else` branch, or an "
+                       "assignment on the next statement)")
+    # ... it must not read `$?` inside `if ! cmd` (that is the negation's 0) ...
+    if re.search(r"\bif\s+!\s*apk\s+add\b", norm):
         return False, ("its apk invocation is still wrapped in `if !`, so the "
                        "only status it can read is the negation's")
+    # ... and the gate must test and REPORT that captured status.
+    gates = [m.group(1) for m in _GATE_TEST_RE.finditer(norm)]
+    rc = next((g for g in gates if g in captures), None)
+    if rc is None:
+        return False, ("it captures %s but never gates on it"
+                       % (", ".join(sorted(captures)) or "nothing"))
+    if not any(re.search(r"\bgate_fail\b", ln) and re.search(_ref(rc), ln)
+               for ln in logical):
+        return False, ("its failure report does not print the captured rc (%s)"
+                       % rc)
     return True, ""
 
 
@@ -1322,15 +1578,26 @@ def guard_router_dep_stage(bundle_dir):
     resolves from the DB and such a stage looks correct — which is why a fresh
     flash was the first box to refuse.) Upstream PR #178 fixed this at the
     source, so the guard passes on the current pin; it fails the build closed on
-    any real installer whose stage is not the shape it can guarantee, and it is
-    blind to comments, whitespace and rewording.
+    any real installer whose stage is not the shape it can guarantee. It judges
+    the shell the stage EXECUTES: it is blind to comments (full-line and trailing)
+    and to whitespace/indentation, and it locates the real `apk add` command
+    rather than a mention of one — but the banner and gate wording are a pinned
+    interface, and a genuinely reworded shell is not the same stage.
     """
     path = os.path.join(bundle_dir, ROUTER_INSTALLER_NAME)
     if not os.path.isfile(path):
         return ""
     before = sha256_file(path)
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except UnicodeDecodeError as exc:
+        raise Fail(
+            "the pinned router-side installer %s is not valid UTF-8 (%s), so "
+            "this builder cannot read its stage (2) dependency install to guard "
+            "it. Refusing to ship a bundle whose dependency stage cannot be "
+            "checked; re-check OFFLINE_INSTALLER_REF and re-pin a plain-text "
+            "installer." % (ROUTER_INSTALLER_NAME, exc))
     if not all(frag in text for frag in ROUTER_INSTALLER_FINGERPRINT):
         log("%s is not the OFFLINE-BUNDLE-2 router-side installer (no %s); "
             "nothing to guard"
@@ -1353,7 +1620,7 @@ def guard_router_dep_stage(bundle_dir):
             "OFFLINE_INSTALLER_REF."
             % (ROUTER_INSTALLER_NAME, ROUTER_INSTALLER_NAME))
 
-    ok, why = _dep_stage_offers_closure(_normalise_sh(region))
+    ok, why = _dep_stage_offers_closure(region)
     if not ok:
         raise Fail(
             "the pinned router-side installer %s has a stage (2) dependency "
@@ -1376,7 +1643,12 @@ def guard_router_dep_stage(bundle_dir):
     pkgs = os.path.join(bundle_dir, "pkgs")
     staged = 0
     if os.path.isdir(pkgs):
-        staged = len([n for n in os.listdir(pkgs) if n.endswith(".apk")])
+        # Recursive, and the package under test is NOT counted: the note says
+        # "minus the package under test", so the number must not include it.
+        staged = len([n for _root, _dirs, files in os.walk(pkgs)
+                      for n in files
+                      if n.endswith(".apk")
+                      and not n.startswith(ROUTER_PKG_PREFIX)])
     log("router-side dependency stage: %s offers the full staged closure to apk "
         "in one --no-network transaction and reports apk's own rc; shipped "
         "byte-identical to the pin (sha256 %s)"
