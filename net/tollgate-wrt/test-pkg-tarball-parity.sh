@@ -69,6 +69,26 @@
 #      (the ordering IS the fix), and the nodogsplash restart must follow the
 #      firewall reload (an fw4 reload flushes ND's injected chains). A copy that
 #      silently drops or reorders a reload fails here instead of on hardware.
+#   J. the pair gate: the vendored 92 (from the portal pin) and the pinned
+#      module tarball's 99-tollgate-setup are the TWO writers of
+#      uhttpd.main.redirect_https, and the install order decides which lands
+#      last (the module's postinst runs the uci-defaults as 90, 99, 92 -- 92
+#      last there; numeric uci-defaults order at boot is 90, 92, 99 -- 99 last
+#      there). Two writers on one DERIVED value are safe only while they
+#      evaluate the SAME rule: the module CLI's coverage check, `tollgate ssl
+#      covers`. Measured counter-example (bench MT3000, pre17, 2026-09-26): the
+#      board's :8443 carried the OpenWrt image's placeholder certificate
+#      (CN=OpenWrt, SAN DNS:OpenWrt) and :8090 redirected to it, so every admin
+#      login showed a hard certificate error -- with each writer's own premise
+#      satisfied. J.a each script evaluates the shared predicate; J.b each
+#      writes an explicit value in BOTH directions; J.c every
+#      redirect_https='1' is armed by a condition that names the predicate,
+#      never by an existence test of the placeholder (the pre17 defect); J.d the
+#      two fingerprints are identical, so the writers cannot drift onto two
+#      different checkers. The two files are at DIFFERENT pins on purpose (92 is
+#      vendored from vendor.lock.json -> portal_commit, 99 comes from the module
+#      pin's tarball); the gate compares them where the recipe actually gets
+#      them, which is what makes a half-landed re-pin fail here.
 #
 # THE ONE DOCUMENTED EXCLUSION: packaging/files/tollgate-captive-portal-site/.
 # The module ships a checked-in, ASSET-LESS copy of the guest portal (the vite
@@ -542,6 +562,141 @@ PY
                 ok "Gate I: nodogsplash restart follows the firewall reload (reload line $ln_fw, ND restart line $ln_nd)"
             fi
         fi
+    fi
+fi
+
+# ---------------------------------------------------------------- Gate J ----
+# PAIR GATE: uhttpd.main.redirect_https has TWO writers and must have ONE rule.
+#
+# 92-tollgate-admin-setup (vendored here from the portal pin) and the pinned
+# module tarball's 99-tollgate-setup both write uhttpd.main.redirect_https, and
+# which one lands last depends on the install path -- the module's postinst runs
+# the uci-defaults as 90, 99, 92, while boot runs them numerically as 90, 92, 99.
+# Two scripts writing one DERIVED value are only safe while they evaluate the
+# same rule; the pre17 bench defect is what happens when they do not (the board's
+# :8443 carried the image's placeholder certificate and :8090 redirected to it --
+# a hard certificate error on every admin login). See the header.
+GATE_J_92="$FEED/files/uci-defaults/92-tollgate-admin-setup"
+GATE_J_99=""
+if [ -n "$TOP" ]; then
+    GATE_J_99="$TOP/packaging/files/etc/uci-defaults/99-tollgate-setup"
+fi
+
+# Non-comment lines only, the same convention as Gates H and I: a commented-out
+# assignment is documentation, never an execution.
+code_only() { awk '/^[[:space:]]*#/ { next } { print }' "$1"; }
+
+# "<cli> ssl covers", normalised (quotes/braces/space removed), one line per
+# invocation on a non-comment line -- the shared-predicate fingerprint.
+predicate_fingerprint() {
+    awk '
+        /^[[:space:]]*#/ { next }
+        match($0, /[^[:space:]]+[[:space:]]+ssl[[:space:]]+covers/) {
+            s = substr($0, RSTART, RLENGTH)
+            gsub(/[[:space:]"$\{\}]/, "", s)
+            print s
+        }
+    ' "$1" | LC_ALL=C sort -u
+}
+
+# Names of the shell functions whose body invokes the predicate. Gate J.c uses
+# them as the "armed by coverage" marker, so a guard is recognised by WHAT the
+# script does (call the predicate), not by a hard-coded function name.
+predicate_funcs() {
+    awk '
+        /^[[:space:]]*#/ { next }
+        match($0, /^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)/) {
+            fn = substr($0, RSTART, RLENGTH)
+            gsub(/[[:space:]()]/, "", fn)
+            next
+        }
+        /ssl[[:space:]]+covers/ { if (fn != "") print fn }
+    ' "$1" | LC_ALL=C sort -u | tr '\n' ' '
+}
+
+# Every redirect_https='1' assignment whose guarding condition does not name the
+# predicate. The condition is read from the nearest preceding if/elif line
+# through its "then", so a multi-line condition counts in full.
+unguarded_arms() {   # $1=file $2=space-separated predicate function names
+    awk -v q="'" -v preds="$2" '
+        BEGIN {
+            n = split(preds, p, " ")
+            for (i = 1; i <= n; i++) if (p[i] != "") want[p[i]] = 1
+        }
+        /^[[:space:]]*#/ { next }
+        {
+            if ($0 ~ /^[[:space:]]*(if|elif)[[:space:]]/) { incond = 1; cond = "" }
+            if (incond) {
+                cond = cond " " $0
+                if ($0 ~ /;[[:space:]]*then[[:space:]]*$/ || $0 ~ /^[[:space:]]*then[[:space:]]*$/) incond = 0
+            }
+            if (index($0, "redirect_https=" q "1" q) > 0) {
+                hit = 0
+                if (cond ~ /ssl[[:space:]]+covers/) hit = 1
+                for (nm in want) if (index(cond, nm) > 0) hit = 1
+                if (hit == 0) printf "%d: %s\n", FNR, $0
+                incond = 0
+            }
+        }
+    ' "$1"
+}
+
+gate_j_one() {   # $1=file $2=label $3=where to write the fingerprint
+    gj_f="$1"
+    gj_label="$2"
+
+    if [ ! -f "$gj_f" ]; then
+        fail "Gate J: $gj_label not found ($gj_f) -- the pair cannot be compared"
+        : > "$3"
+        return 0
+    fi
+
+    # J.a -- evaluates the SHARED coverage predicate, through the module CLI.
+    # Whether it is the SAME predicate as the other writer's is settled by J.d.
+    predicate_fingerprint "$gj_f" > "$3"
+    if [ ! -s "$3" ]; then
+        fail "Gate J.a: $gj_label never invokes the coverage predicate ('ssl covers' on the module CLI) -- its redirect_https is derived on a premise of its own, which is the pre17 placeholder-certificate defect"
+    else
+        ok "Gate J.a: $gj_label derives the redirect from the shared coverage predicate: $(tr '\n' ',' < "$3" | sed 's/,$//')"
+    fi
+
+    # J.b -- an explicit value in BOTH directions, so whichever writer lands last
+    # cannot leave the other's stale value in place.
+    gj_one=$(code_only "$gj_f" | grep -c "uhttpd.main.redirect_https='1'")
+    gj_zero=$(code_only "$gj_f" | grep -c "uhttpd.main.redirect_https='0'")
+    if [ "$gj_one" -gt 0 ] && [ "$gj_zero" -gt 0 ]; then
+        ok "Gate J.b: $gj_label writes uhttpd.main.redirect_https explicitly both ways ('1' x$gj_one, '0' x$gj_zero)"
+    else
+        fail "Gate J.b: $gj_label does not write uhttpd.main.redirect_https explicitly both ways ('1' x$gj_one, '0' x$gj_zero) -- an install order could leave a stale value behind"
+    fi
+
+    # J.c -- every arming write is guarded by the predicate.
+    gj_preds=$(predicate_funcs "$gj_f")
+    unguarded_arms "$gj_f" "$gj_preds" > "$SCRATCH/j-unguarded.txt"
+    if [ -s "$SCRATCH/j-unguarded.txt" ]; then
+        gj_n=$(wc -l < "$SCRATCH/j-unguarded.txt" | tr -d ' ')
+        fail "Gate J.c: $gj_label arms a redirect_https hop from a condition that does not name the coverage predicate ($gj_n site(s)); predicate markers found: '${gj_preds:-none}'"
+        sed 's/^/      UNGUARDED: /' "$SCRATCH/j-unguarded.txt" >&2
+    else
+        ok "Gate J.c: every redirect_https='1' in $gj_label is armed by the coverage predicate"
+    fi
+}
+
+gate_j_one "$GATE_J_92" "the vendored 92 (files/uci-defaults/92-tollgate-admin-setup)" "$SCRATCH/j-fp-92.txt"
+gate_j_one "$GATE_J_99" "the pinned tarball's 99-tollgate-setup (packaging/files/etc/uci-defaults/)" "$SCRATCH/j-fp-99.txt"
+
+# J.d -- the two writers must evaluate the SAME predicate, not merely both have
+# one: a fingerprint mismatch means one derived value is decided by two different
+# rules, which is the defect the pair gate exists for.
+if [ -s "$SCRATCH/j-fp-92.txt" ] && [ -s "$SCRATCH/j-fp-99.txt" ]; then
+    fj_92=$(cat "$SCRATCH/j-fp-92.txt")
+    fj_99=$(cat "$SCRATCH/j-fp-99.txt")
+    if [ "$fj_92" = "$fj_99" ]; then
+        ok "Gate J.d: both writers call the same predicate ($(printf '%s' "$fj_92" | tr '\n' ',' | sed 's/,$//'))"
+    else
+        fail "Gate J.d: the two writers evaluate DIFFERENT coverage predicates"
+        echo "      vendored 92 : $(printf '%s' "$fj_92" | tr '\n' ',')" >&2
+        echo "      tarball 99  : $(printf '%s' "$fj_99" | tr '\n' ',')" >&2
     fi
 fi
 
