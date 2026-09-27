@@ -51,16 +51,38 @@ existing `aarch64_cortex-a53` offline bundle. Its OpenWrt device profile in
 | `cudy_wr3000-v1`   | Cudy WR3000 v1               | `aarch64_cortex-a53` | `mediatek-filogic` | 16 MB SPI-NOR |
 | `glinet_gl-mt3000` | GL-MT3000 (MT3000-class bench)| `aarch64_cortex-a53` | `mediatek-filogic` | —             |
 
-### Capacity caveat — Cudy WR3000 v1
+### Capacity caveat — Cudy WR3000 v1 (and the compressed variant that fits)
 
-The router carries 16 MB of SPI-NOR flash. The `tollgate-wrt` payload is 21 MB
-uncompressed (`/usr/bin/tollgate-wrt` 12,361,280 B + `/usr/bin/tollgate`
-7,373,632 B) and 8.5 MB compressed, while only ~4.6 MB of jffs2 overlay is free,
-so a **persistent** package install fails with `ENOSPC` and only a **volatile**
-(tmpfs) install fits. The 37-package dependency closure (`nodogsplash` 5.0.2-r2
-+ `jq` + `libmicrohttpd-no-ssl` + `iptables-nft` + its kmods) installs normally;
-only the payload does not fit. Measured on OpenWrt 25.12.5 r33051-f5dae5ece4,
-board `cudy,wr3000-v1`.
+The router carries 16 MB of SPI-NOR flash. The **default** `tollgate-wrt`
+payload is 21 MB uncompressed (`/usr/bin/tollgate-wrt` 12,361,280 B +
+`/usr/bin/tollgate` 7,373,632 B) and 8.5 MB compressed, while only ~4.6 MB of
+jffs2 overlay is free, so a default-build install fails with `ENOSPC` and a
+**volatile** (tmpfs) install is the fallback. The 37-package dependency closure
+(`nodogsplash` 5.0.2-r2 + `jq` + `libmicrohttpd-no-ssl` + `iptables-nft` + its
+kmods) installs normally; only the default payload does not fit. Measured on
+OpenWrt 25.12.5 r33051-f5dae5ece4, board `cudy,wr3000-v1`.
+
+A 16 MB device is **not** limited to the volatile path. The module repo's CI
+also builds **`upx-ultra-brute`** variants for `aarch64_cortex-a53` /
+`mediatek-filogic`, and that payload is **5.34 MiB** in total
+(`/usr/bin/tollgate-wrt` 3,389.5 KiB + `/usr/bin/tollgate` 1,823.8 KiB plus
+~256 KiB of config and captive-portal files). A real WR3000 v1 installed that
+`.apk`, rebooted, and came back with `tollgate-wrt` running and no volatile
+helper — a **persistent** install on 16 MB. Two notes from that run: the
+1.78 MiB `tollgate` CLI can be dropped after provisioning to leave room for the
+`nodogsplash` closure, and the closure must be installed in **one** `apk add`
+transaction because `apk add --force-non-repository <file>` performs a world
+sync that removes packages previously installed from files.
+
+### Compressed variants are built, but this feed does not publish them
+
+The `upx-ultra-brute` artifacts are built by the module repo's CI and announced
+over Nostr (NIP-94 kind 1063, tag `compression=upx-ultra-brute`), but the
+release job here publishes only the default `.ipk`/`.apk` per
+(arch, target) row — so today a small-flash device cannot fetch the compressed
+variant from a release. Publishing the compressed variants (or a `small-flash`
+bundle alongside the existing per-arch one) is a candidate change to this
+repo's release matrix; it is not part of this documentation change.
 
 ### Offline bundles are per-arch, not per-device
 
