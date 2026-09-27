@@ -19,12 +19,18 @@
 #      asset set (otherwise the signed manifest does not cover it).
 #   D. the FRESH-BOX keepalive: a freshly flashed box has no
 #      /etc/config/nodogsplash, so a seed that resolves @nodogsplash[0] without
-#      first creating it lands NOTHING and install-router.sh's keepalive_applied
-#      gate then REFUSES with exit 5 (observed on the bench MT3000, 2026-09-27
-#      wave 3; an UPGRADE passes). These checks reproduce that on a simulated box
-#      (`uci` is a PATH double) and pin the builder to shipping a seed that can
-#      establish the trust the installer asserts — while the trust check itself
-#      stays strict (a seed without 'allow tcp port 22' must still not pass).
+#      first creating the config FILE lands NOTHING and install-router.sh's
+#      keepalive_applied gate then REFUSES with exit 5 (observed on the bench
+#      MT3000, 2026-09-27 wave 3; an UPGRADE passes). Creating the SECTION is not
+#      enough on its own: real `uci add <cfg> <type>` also needs the config FILE to
+#      exist (measured on the same bench, 2026-09-28: exit 3, "uci: Entry not
+#      found"; with the file created first the same call exited 0), so a
+#      section-only guard is dead code on a fresh box. These checks reproduce that
+#      on a simulated box (`uci` is a PATH double that models BOTH real-uci
+#      behaviours) and pin the builder to shipping a seed that creates the file
+#      AND the section — while the trust check itself stays strict (a seed without
+#      'allow tcp port 22' must still not pass) and the repair stays idempotent
+#      (an already-guarded seed is shipped byte for byte).
 #   E. the FRESH-BOX dependency CLOSURE: stage (2) of install-router.sh hands apk
 #      the dependency files BY PATH, and with --no-network apk resolves a
 #      transaction from the files NAMED plus the installed DB only — so a stage
@@ -709,14 +715,21 @@ UCI_DOUBLE="$WORK/uci-double/bin/uci"
 mkdir -p "$(dirname "$UCI_DOUBLE")"
 cat > "$UCI_DOUBLE" <<'UCI'
 #!/bin/sh
-# minimal `uci` double. The router is a state directory ($UCI_STATE); the only
-# behaviour modelled is real uci's: nodogsplash.@nodogsplash[0] does not resolve,
-# and add_list exits non-zero, until the section exists.
+# minimal `uci` double. The router is a state directory ($UCI_STATE); the router's
+# filesystem root is $TGOFFLINE_ROOT (the seed itself uses that as its prefix, so it
+# writes <root>/etc/config/nodogsplash — never a real /etc). The behaviours modelled
+# are exactly real uci's, as measured on a fresh box (bench MT3000, 2026-09-28):
+#   * `uci add <cfg> <type>` exits 3 with "uci: Entry not found" while
+#     /etc/config/<cfg> does not exist;
+#   * nodogsplash.@nodogsplash[0] does not resolve, and add_list exits non-zero,
+#     until the section exists.
 S="$UCI_STATE"
+CFG="${TGOFFLINE_ROOT:-}/etc/config/nodogsplash"
 [ "$1" = "-q" ] && shift
 cmd="$1"; shift 2>/dev/null || true
 case "$cmd" in
   get)
+    [ -f "$CFG" ] || exit 1
     [ -f "$S/section" ] || exit 1
     case "$1" in
       'nodogsplash.@nodogsplash[0]') exit 0 ;;
@@ -726,9 +739,11 @@ case "$cmd" in
     esac ;;
   add)
     [ "${1:-}" = "nodogsplash" ] || exit 1
+    [ -f "$CFG" ] || { echo "uci: Entry not found" >&2; exit 3; }  # real uci, measured
     : > "$S/section"; exit 0 ;;
   add_list)
-    [ -f "$S/section" ] || exit 1          # real uci: entry not found
+    [ -f "$CFG" ] || exit 3                # real uci: Entry not found (no config FILE)
+    [ -f "$S/section" ] || exit 1          # real uci: entry not found (no section)
     key="$1"; val="${key#*=}"
     case "$key" in
       *trustedmac*) printf '%s\n' "$val" >> "$S/trustedmac" ;;
@@ -745,25 +760,37 @@ export PATH
 FB_MAC="8c:16:45:0d:6f:c5"
 # mirrors install-router.sh assert_keepalive_live(): the trust is "live" only
 # when BOTH the MAC is in trustedmac AND 'port 22' is in users_to_router.
+# TGOFFLINE_ROOT is the seed's own filesystem prefix, so the double resolves the
+# same /etc/config/nodogsplash the seed writes.
 fb_trust_live() { # fb_trust_live <state-dir>
   local tm utr
-  tm=$(UCI_STATE="$1" "$UCI_DOUBLE" -q get nodogsplash.@nodogsplash[0].trustedmac 2>/dev/null || echo "")
-  utr=$(UCI_STATE="$1" "$UCI_DOUBLE" -q get nodogsplash.@nodogsplash[0].users_to_router 2>/dev/null || echo "")
+  tm=$(TGOFFLINE_ROOT="$1" UCI_STATE="$1" "$UCI_DOUBLE" -q get nodogsplash.@nodogsplash[0].trustedmac 2>/dev/null || echo "")
+  utr=$(TGOFFLINE_ROOT="$1" UCI_STATE="$1" "$UCI_DOUBLE" -q get nodogsplash.@nodogsplash[0].users_to_router 2>/dev/null || echo "")
   echo "$tm" | grep -q "$FB_MAC" || return 1
   echo "$utr" | grep -q 'port 22' || return 1
   return 0
 }
+# the line number of the first match of an -F/-E pattern, or "" when absent
+fb_line_of() { # fb_line_of <file> <mode(-F|-E)> <pattern>
+  grep -n "$2" "$3" "$1" 2>/dev/null | head -1 | cut -d: -f1
+}
 
 # D1: the as-shipped seed lands NOTHING on a fresh box. This reproduces the bug
 #     through the seed's own logic (and proves the fixture really is the bug —
-#     if this passed, D2/D3 would be vacuous).
-ST_OLD="$WORK/freshbox-state-old"; mkdir -p "$ST_OLD"
+#     if this passed, D2/D3 would be vacuous). A fresh box HAS /etc/config but no
+#     /etc/config/nodogsplash.
+ST_OLD="$WORK/freshbox-state-old"; mkdir -p "$ST_OLD/etc/config"
 # shellcheck disable=SC2086
-UCI_STATE="$ST_OLD" $FB_SH "$WORK/installer-src/templates/99z-mgmt-keepalive" >/dev/null 2>&1
+TGOFFLINE_ROOT="$ST_OLD" UCI_STATE="$ST_OLD" $FB_SH "$WORK/installer-src/templates/99z-mgmt-keepalive" >/dev/null 2>&1
 if fb_trust_live "$ST_OLD"; then
   fail "fresh-box: the as-shipped seed established trust (the fixture is not the wave-3 bug)"
 else
   pass "fresh-box: the as-shipped seed lands NOTHING with no /etc/config/nodogsplash — the wave-3 refusal"
+fi
+if [ -f "$ST_OLD/etc/config/nodogsplash" ]; then
+  fail "fresh-box: the as-shipped seed created /etc/config/nodogsplash (it cannot — the fix is what creates it)"
+else
+  pass "fresh-box: the as-shipped seed never creates the config FILE — the section guard cannot fire without it"
 fi
 
 # D2: the builder repairs the seed, so the BUNDLE's seed creates the section.
@@ -782,6 +809,21 @@ if assemble "$WORK/out-fresh" --installer-dir "$WORK/freshbox-src"; then
   else
     fail "fresh-box: the bundle's seed does not create the anonymous nodogsplash section"
   fi
+  # ...and it must create the config FILE first: real `uci add` cannot create a
+  # section in a config file that does not exist (measured: exit 3, "uci: Entry
+  # not found"), so a section guard with no file-ensure is dead code on a fresh box.
+  fe_line="$(fb_line_of "$FB_SEED" -F 'etc/config/nodogsplash" ] || : >')"
+  uci_line="$(fb_line_of "$FB_SEED" -E '^[[:space:]]*uci ')"
+  if [ -n "$fe_line" ]; then
+    pass "fresh-box: the bundle's seed creates /etc/config/nodogsplash when it is absent (line $fe_line)"
+  else
+    fail "fresh-box: the bundle's seed never creates /etc/config/nodogsplash — the section guard can never fire"
+  fi
+  if [ -n "$fe_line" ] && [ -n "$uci_line" ] && [ "$fe_line" -lt "$uci_line" ]; then
+    pass "fresh-box: the file-ensure step comes BEFORE the seed's first uci call (line $fe_line < $uci_line)"
+  else
+    fail "fresh-box: the file-ensure step is not before the first uci call (file-ensure='$fe_line', first uci='$uci_line')"
+  fi
   if cmp -s "$WORK/freshbox-seed-input" "$FB_SEED"; then
     fail "fresh-box: the as-shipped seed was shipped unchanged (no repair ran)"
   else
@@ -799,24 +841,47 @@ if assemble "$WORK/out-fresh" --installer-dir "$WORK/freshbox-src"; then
   else
     fail "fresh-box: the repaired seed broke the bundle manifest"
   fi
-  # D3: applying the BUNDLE's seed on a fresh box establishes live trust, so
-  #     keepalive_applied passes and the install proceeds.
-  ST_NEW="$WORK/freshbox-state-new"; mkdir -p "$ST_NEW"
+  # D3: applying the BUNDLE's seed on a fresh box creates the config file, the
+  #     section, and the trust — so keepalive_applied passes and the install
+  #     proceeds.
+  ST_NEW="$WORK/freshbox-state-new"; mkdir -p "$ST_NEW/etc/config"
   # shellcheck disable=SC2086
-  UCI_STATE="$ST_NEW" $FB_SH "$FB_SEED" >/dev/null 2>&1
+  TGOFFLINE_ROOT="$ST_NEW" UCI_STATE="$ST_NEW" $FB_SH "$FB_SEED" >/dev/null 2>&1
+  if [ -f "$ST_NEW/etc/config/nodogsplash" ]; then
+    pass "fresh-box: the bundle's seed created /etc/config/nodogsplash on a box that had none"
+  else
+    fail "fresh-box: the bundle's seed did not create /etc/config/nodogsplash"
+  fi
+  if [ -f "$ST_NEW/section" ]; then
+    pass "fresh-box: the bundle's seed created the anonymous nodogsplash section"
+  else
+    fail "fresh-box: the bundle's seed did not create the anonymous nodogsplash section"
+  fi
   if fb_trust_live "$ST_NEW"; then
     pass "fresh-box: the bundle's seed establishes live trust, so keepalive_applied passes"
   else
     fail "fresh-box: the bundle's seed still does not establish live trust on a fresh box"
   fi
+  if grep -q "$FB_MAC" "$ST_NEW/trustedmac" 2>/dev/null \
+     && grep -q 'allow tcp port 22' "$ST_NEW/users_to_router" 2>/dev/null; then
+    pass "fresh-box: the trust landed as the installer asserts it (trustedmac MAC + 'allow tcp port 22')"
+  else
+    fail "fresh-box: the landed trust does not match what install-router.sh asserts"
+  fi
   # D4: idempotent — the seed re-applies at every boot (uci-defaults), so a second
-  #     run must not duplicate the entries.
+  #     run must change nothing at all.
+  cp "$ST_NEW/etc/config/nodogsplash" "$WORK/freshbox-cfg-after-first"
   # shellcheck disable=SC2086
-  UCI_STATE="$ST_NEW" $FB_SH "$FB_SEED" >/dev/null 2>&1
-  if [ "$(UCI_STATE="$ST_NEW" "$UCI_DOUBLE" -q get nodogsplash.@nodogsplash[0].trustedmac | wc -l)" = "1" ]; then
+  TGOFFLINE_ROOT="$ST_NEW" UCI_STATE="$ST_NEW" $FB_SH "$FB_SEED" >/dev/null 2>&1
+  if [ "$(TGOFFLINE_ROOT="$ST_NEW" UCI_STATE="$ST_NEW" "$UCI_DOUBLE" -q get nodogsplash.@nodogsplash[0].trustedmac | wc -l)" = "1" ]; then
     pass "fresh-box: re-applying the seed does not duplicate the trust entries"
   else
     fail "fresh-box: re-applying the seed duplicated the trust entries"
+  fi
+  if cmp -s "$WORK/freshbox-cfg-after-first" "$ST_NEW/etc/config/nodogsplash"; then
+    pass "fresh-box: re-applying the seed leaves /etc/config/nodogsplash byte-identical (the file-ensure never clobbers)"
+  else
+    fail "fresh-box: re-applying the seed rewrote /etc/config/nodogsplash"
   fi
 else
   fail "fresh-box: --installer-dir assembly with the as-shipped seed failed: $(tail -n2 "$WORK/assemble.log")"
@@ -827,6 +892,8 @@ fi
 #     have weakened the Aug 16/17 fail-safe.
 cat > "$WORK/freshbox-nossh.sh" <<'SEED'
 #!/bin/sh
+# fresh-box safe (file + section) but WITHOUT the SSH pre-auth rule
+[ -f "${TGOFFLINE_ROOT:-}/etc/config/nodogsplash" ] || : > "${TGOFFLINE_ROOT:-}/etc/config/nodogsplash"
 if ! uci -q get nodogsplash.@nodogsplash[0] >/dev/null 2>&1; then
     uci add nodogsplash nodogsplash
 fi
@@ -834,9 +901,9 @@ uci add_list nodogsplash.@nodogsplash[0].trustedmac="8c:16:45:0d:6f:c5"
 uci commit nodogsplash
 exit 0
 SEED
-ST_NS="$WORK/freshbox-state-nossh"; mkdir -p "$ST_NS"
+ST_NS="$WORK/freshbox-state-nossh"; mkdir -p "$ST_NS/etc/config"
 # shellcheck disable=SC2086
-UCI_STATE="$ST_NS" $FB_SH "$WORK/freshbox-nossh.sh" >/dev/null 2>&1
+TGOFFLINE_ROOT="$ST_NS" UCI_STATE="$ST_NS" $FB_SH "$WORK/freshbox-nossh.sh" >/dev/null 2>&1
 if fb_trust_live "$ST_NS"; then
   fail "fresh-box control: the trust check passes with no 'allow tcp port 22' (it is vacuous)"
 else
@@ -856,6 +923,89 @@ else
   else
     fail "fresh-box: the refusal did not name the seed: $(tail -n1 "$WORK/assemble.log")"
   fi
+fi
+
+# D7 (control): the file-ensure step must be LOAD-BEARING, or D3 is vacuous. A seed
+#     that creates the SECTION but never the config FILE lands nothing on a fresh
+#     box — because real `uci add` cannot create a section in a file that does not
+#     exist (exit 3, "uci: Entry not found"; measured 2026-09-28). This is the
+#     defect as it shipped: the first fresh-box repair added the section guard only.
+cat > "$WORK/freshbox-nofile.sh" <<'SEED'
+#!/bin/sh
+# the first fresh-box repair's shape: section guard, NO file-ensure
+if ! uci -q get nodogsplash.@nodogsplash[0] >/dev/null 2>&1; then
+    uci add nodogsplash nodogsplash
+fi
+uci add_list nodogsplash.@nodogsplash[0].trustedmac="8c:16:45:0d:6f:c5"
+uci add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 22'
+uci commit nodogsplash
+exit 0
+SEED
+ST_NF="$WORK/freshbox-state-nofile"; mkdir -p "$ST_NF/etc/config"
+# shellcheck disable=SC2086
+TGOFFLINE_ROOT="$ST_NF" UCI_STATE="$ST_NF" $FB_SH "$WORK/freshbox-nofile.sh" >/dev/null 2>&1
+if fb_trust_live "$ST_NF"; then
+  fail "fresh-box control: a SECTION-only seed established trust with no config FILE (the file-ensure is not load-bearing — the model is vacuous)"
+else
+  pass "fresh-box control: a SECTION-only seed lands NOTHING on a fresh box — the file-ensure is load-bearing"
+fi
+if [ -f "$ST_NF/etc/config/nodogsplash" ]; then
+  fail "fresh-box control: the SECTION-only seed created the config file by itself"
+else
+  pass "fresh-box control: the SECTION-only seed never creates the config file (nothing does, without the fix)"
+fi
+
+# D8: a seed that ALREADY carries the fresh-box guard is shipped BYTE FOR BYTE —
+#     the repair must not re-apply it, and must not fail closed on a good pin. The
+#     "already carries it" seed is posed using the BUILDER'S OWN guard text, so the
+#     assertion cannot drift away from what the repair actually inserts.
+mkdir -p "$WORK/freshbox-safe-src/templates"
+write_unsafe_keepalive "$WORK/freshbox-safe-src/templates/99z-mgmt-keepalive"
+printf '#!/bin/sh\necho driver\n' > "$WORK/freshbox-safe-src/install-offline.sh"
+printf '#!/bin/sh\necho router side\n' > "$WORK/freshbox-safe-src/install-router.sh"
+chmod +x "$WORK/freshbox-safe-src/install-offline.sh" "$WORK/freshbox-safe-src/install-router.sh"
+if OUT="$(python3 - "$SCRIPT" "$WORK/freshbox-safe-src/templates/99z-mgmt-keepalive" <<'PY' 2>&1
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("offline_bundle", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+path = sys.argv[2]
+lines = open(path, encoding="utf-8").read().splitlines(keepends=True)
+guard = [mod.KEEPALIVE_FRESHBOX_HEADER, mod.KEEPALIVE_FILE_ENSURE,
+         mod.KEEPALIVE_SECTION_ENSURE]
+for i, line in enumerate(lines):
+    if "uci" in line and "nodogsplash" in line:
+        lines[i:i] = guard
+        break
+else:
+    print("CONTROL-FAILURE: the fixture seed never touches nodogsplash")
+    sys.exit(1)
+open(path, "w", encoding="utf-8").write("".join(lines))
+# the marks must be recognised in exactly what was just written
+assert mod.KEEPALIVE_FILE_ENSURE_RE.search("".join(lines)), "file mark missed its own text"
+assert mod.KEEPALIVE_SECTION_MARK in "".join(lines), "section mark missed its own text"
+print("posed as upstream: the seed already carries both guard steps")
+PY
+)"; then
+  pass "fresh-box: posed an already-guarded seed using the builder's own guard ($(printf '%s' "$OUT" | tail -n1))"
+  cp "$WORK/freshbox-safe-src/templates/99z-mgmt-keepalive" "$WORK/freshbox-safe-seed-input"
+  if assemble "$WORK/out-fresh-safe" --installer-dir "$WORK/freshbox-safe-src"; then
+    if cmp -s "$WORK/freshbox-safe-seed-input" \
+              "$WORK/out-fresh-safe/tollgate-wrt-${VERSION}-${ARCH}-offline/templates/99z-mgmt-keepalive"; then
+      pass "fresh-box: a seed that already carries the guard is shipped byte-for-byte (no double-apply)"
+    else
+      fail "fresh-box: the repair rewrote a seed that already carried the guard"
+    fi
+    if grep -q 'left unchanged' "$WORK/assemble.log"; then
+      pass "fresh-box: the repair reported the seed as already fresh-box safe"
+    else
+      fail "fresh-box: the repair did not report the already-guarded seed: $(tail -n1 "$WORK/assemble.log")"
+    fi
+  else
+    fail "fresh-box: assembling a bundle from an already-guarded seed failed closed: $(tail -n2 "$WORK/assemble.log")"
+  fi
+else
+  fail "fresh-box: could not pose an already-guarded seed — $(printf '%s' "$OUT" | tail -n1)"
 fi
 
 # ------------------------------------------- E: the FRESH-BOX dependency closure
