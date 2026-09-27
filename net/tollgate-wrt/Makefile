@@ -213,13 +213,19 @@ PKG_NAME:=tollgate-wrt
 # already points at 4158030, which IS portal main after #62/#64/#65 — #62
 # fail-closed admin credential, #64 coverage-based LuCI redirect, #65 admin
 # board :8443 identity + :8090 redirect; the vendored 92 is re-copied
-# byte-exactly from that same commit on this branch. The module pin
-# PKG_SOURCE_VERSION and PKG_HASH are DELIBERATELY still the pre18 values and
-# will move to the module main tip in a FOLLOW-UP COMMIT on this same branch
-# once the module-side fixes land — so this version string does NOT yet describe
-# new module bytes, exactly as pre17 shipped a bump with every pin unchanged
-# (above). The 'Vendor drift guard' and 'Module tarball parity guard' jobs stay
-# green across the split because each half is compared against its own pin.
+# byte-exactly from that same commit on this branch.
+#
+# The MODULE PIN then moves in the follow-up commit this block originally
+# promised, so pre19 now describes ONE release instead of two halves:
+# PKG_SOURCE_VERSION goes to afc86b3f — the merged module main TIP — and
+# PKG_HASH is recomputed for it in the same commit (see both blocks below).
+# Holding the pin back was deliberate while the module-side fixes were still in
+# flight: the first commit's package could then be built and accepted against
+# the pre19 portal half over the pre18 module half, which the PR body states as
+# a known consequence rather than hiding it. This commit closes that gap, so
+# `0.6.0_alpha4_pre19` names exactly one set of bytes. The 'Vendor drift guard'
+# and 'Module tarball parity guard' jobs stay green across the split because
+# each half is compared against its own pin.
 #
 # Read `_pre16`/`_pre17`/`_pre18`/`_pre19` honestly: like pre15, the pin sits
 # AFTER the v0.6.0-alpha4 tag, so this is a post-tag MAIN-TIP build of the alpha4
@@ -272,9 +278,29 @@ PKG_VERSION:=0.6.0_alpha4_pre19
 # tag-triggered, no v0.6.0-alpha4-pre18 tag or asset exists (the newest published
 # release is v0.6.0-alpha4-pre17), and nothing is offered to a device until that
 # tag is cut — so `0.6.0_alpha4_pre18` still names exactly one set of bytes.
+# pre19 advances the pin to afc86b3f — the merged module main TIP (0 commits
+# behind main), replacing the pre18 33186bb3 pin — and moves PKG_HASH WITH it
+# (the PKG_HASH block below carries the recalibration). The 13 commits between
+# those two pins ARE the pre19 module content: #596 (the degradation path —
+# attributed ndsctl interruptions, bounded escalations, and a startup
+# reconciliation of NoDogSplash's authorisations), #598 (carry the
+# socket-scoped client identity on every client-scoped route), #599/#594/#600
+# (the br-mgmt ADR, the captive-side product decision, and the fold of #599's
+# review findings into that ADR — docs only), #584 (run the testenv-gated
+# merchant tests in the CI lane), #605 (one device code — hostname, captive SSID
+# and private SSID agree), #606 (carry golang.org/x/time in src/cli/go.mod so
+# the pre-PR gate passes in default module mode), #602 (withdraw the
+# install-order safety claim from the redirect-https decision — docs only), #608
+# (the payment pre-flight's test seam is per merchant — fixes the intermittent
+# -race failure), #603 (the board-is-the-default-face ADR, its cross-links and
+# the release gate — docs only), #610 (the repair path's portal banner commits
+# on the shared value — the #605 review F1-F5 fix) and #609 (the module repins
+# its captive portal to portal main and gates the admin board's redirect rule).
+# Without this move the release tag would ship module bytes from before all of
+# them.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=33186bb39451abf1e879be84886b6705542787b2
+PKG_SOURCE_VERSION:=afc86b3fa41415b38ab870e16749181bcca4eb80
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -289,6 +315,9 @@ PKG_SOURCE_VERSION:=33186bb39451abf1e879be84886b6705542787b2
 # leaves this variable UNCHANGED, and pre17 re-verified it the same way against
 # the SAME pin (test-pkg-tarball-parity.sh Gate B now does that check on every
 # run, so it can no longer be a thing someone remembers to do by hand).
+# pre19 re-verified it the same way against the NEW pin (afc86b3f): the
+# repo-root VERSION file there is still v0.6.0-alpha4, so this variable stays
+# UNCHANGED — Gate B enforces the equality on every run.
 # Do not assume that is always so: it moved
 # alpha2 -> alpha4 at pre15. A stale tag is a live defect, not a mislabel: it
 # writes a setup marker no upstream build writes, and an unchanged marker sends
@@ -349,13 +378,23 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # committed below (the recorded command output is in this PR's body). It was
 # re-downloaded a second time and hashed to the same value, which is the
 # immutability the pin relies on.
+# pre19 re-calibrated on its pin move exactly as every earlier bump did:
+# replaying the identical construction for the OUTGOING pin (33186bb3)
+# reproduced that pin's committed
+# 872892c066cdefd340b3d0f140ad4815e2375165e3130a0d4efbeb05a5568279 exactly, so
+# the same construction for afc86b3f yields
+# e449a2ece6af63c1fabaf544833bfecf4839598680c0f17aaf866da164d363e2 — the value
+# committed below (codeload reports 1445890 bytes for it). A PKG_HASH is NEVER
+# carried across a pin move: Gate A below fails a moved pin whose hash was not
+# recalibrated, and this value comes from a fresh download of the NEW pin, not
+# from the outgoing one.
 # Note the Makefile carries exactly ONE PKG_SOURCE_URL form. The two plausible
 # variants were tried and rejected (command output in the PR body): the same URL
 # WITHOUT the '?' requests `.../tar.gz/<sha>/<name>` and 404s, and the tag form
 # `.../tar.gz/v0.6.0-alpha4?` resolves 200 but hashes DIFFERENTLY
 # (28d63edb…), i.e. it is not the commit tarball this pin builds from.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=872892c066cdefd340b3d0f140ad4815e2375165e3130a0d4efbeb05a5568279
+PKG_HASH:=e449a2ece6af63c1fabaf544833bfecf4839598680c0f17aaf866da164d363e2
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
