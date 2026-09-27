@@ -25,6 +25,18 @@
 #      (`uci` is a PATH double) and pin the builder to shipping a seed that can
 #      establish the trust the installer asserts — while the trust check itself
 #      stays strict (a seed without 'allow tcp port 22' must still not pass).
+#   E. the FRESH-BOX dependency CLOSURE: stage (2) of install-router.sh hands apk
+#      only the files its REQUIRED_DEPS/STUB_OK_DEPS loops name — four of the 38
+#      the bundle stages — and with --no-network apk resolves a transaction from
+#      the files NAMED plus the installed DB only, so nodogsplash's deps (staged,
+#      never named) are `(no such package)` and the install REFUSES with exit 7
+#      (same bench, wave 3c, release pre19). These checks RUN the bundle's stage
+#      (2) against an `apk` PATH double that models apk-tools 3's resolution on a
+#      WAN-less fresh box, so the assertion is behavioural: if the stage does not
+#      offer the WHOLE staged closure, apk refuses and the gate fails, exactly as
+#      on the bench. The as-shipped stage is the control (wave-3 refusal on a
+#      fresh box, PASS on an upgrade box — the reason it stayed invisible), and
+#      the rc accounting is pinned too (a REFUSED(7) must not report `rc=0`).
 #
 # Group C is checked against a MUTATED copy of the real workflow as a negative
 # control, so the assertion cannot pass vacuously:
@@ -32,7 +44,60 @@
 #   `order_ok` on the mutated workflow   -> must FAIL
 #
 # Run locally:  bash .github/workflows/scripts/offline-bundle-test.sh
-# Offline: groups A, B, C and D are hermetic (no network, no apk, no router).
+# Offline: groups A, B, C, D and E are hermetic (no network, no apk, no router).
+#
+# ---------------------------------------------------------------------------
+# Evidence — both runs executed 2026-09-27 on the offline-bundle worktree, for
+# the fresh-box DEPENDENCY-CLOSURE fix (group E). The RED run points the suite at
+# a copy of the builder with the dependency-stage repair removed (the pinned
+# installer is passed through unchanged), which is the negative control for
+# group E; the same mutant is the group-D RED below.
+#
+# RED   # derive the un-repaired copy: the dependency-stage repair call removed
+#       $ python3 - <<'PY'
+#       s = open('.github/workflows/scripts/offline-bundle.py').read()
+#       s = s.replace('        dep_note = repair_router_dep_stage(bundle_dir)',
+#                     '        dep_note = ""  # dependency-stage repair removed')
+#       open('/tmp/offline-bundle-nodeprepair.py', 'w').write(s)
+#       PY
+#       $ OFFLINE_BUNDLE_TEST_SUBJECT=/tmp/offline-bundle-nodeprepair.py \
+#             bash .github/workflows/scripts/offline-bundle-test.sh
+#   FAIL closure: the bundle's dependency stage still enumerates only REQUIRED_DEPS/STUB_OK_DEPS
+#   FAIL closure: an apk invocation still reads `$?` inside `if !` (the rc is the negation's 0)
+#   FAIL closure: apk was offered: jq-1.8.1-r2.apk libmicrohttpd-no-ssl-1.0.2-r1.apk
+#         libpthread-1.2.5-r5.apk nodogsplash-5.0.2-r2.apk — expected: iptables-mod-conntrack-extra-1.8.10-r3.apk
+#         iptables-mod-ipopt-1.8.10-r3.apk iptables-mod-nat-extra-1.8.10-r3.apk iptables-nft-1.8.10-r3.apk
+#         jq-1.8.1-r2.apk libmicrohttpd-no-ssl-1.0.2-r1.apk libpthread-1.2.5-r5.apk libxtables-1.8.10-r3.apk
+#         nodogsplash-5.0.2-r2.apk xtables-nft-1.8.10-r3.apk
+#   FAIL closure: the whole-closure transaction still refuses on a fresh box (rc=7):
+#         GATE deps_installed FAIL apk add of the dependency files failed rc=0 REFUSED(7)
+#   FAIL closure: the dependency gate misreports the rc (rc=7): GATE deps_installed FAIL
+#         apk add of the dependency files failed rc=0
+#   FAIL closure: the package gate misreports the rc (rc=7): GATE package_installed FAIL
+#         apk add tollgate-wrt_0.6.0_alpha4_pre17_aarch64_cortex-a53.apk failed rc=0
+#   FAIL closure: the idempotency input was NOT a repaired installer (the repair never ran)
+#   FAIL closure: an unrecognised router-side dependency stage is shipped anyway
+#   49 passed, 8 failed        <- rc=1
+#
+#   (the two CONTROLS in the same run still pass, so the assertion is not
+#    vacuous: "the as-shipped stage reproduces the wave-3 refusal (4 of 10 files,
+#    REFUSED(7), gate rc=0)" and "the same stage PASSES on an upgrade box")
+#
+# GREEN $ bash .github/workflows/scripts/offline-bundle-test.sh
+#   ok   closure: the bundle's dependency stage offers the staged closure, not just the top-level deps
+#   ok   closure: both apk invocations capture apk's own rc (no `rc=0` inside `if !`)
+#   ok   closure: the bundle's stage offers every staged package (except the one under test) to apk
+#   ok   closure: on a fresh box the whole-closure transaction resolves and deps_installed passes
+#   ok   closure control: the as-shipped stage reproduces the wave-3 refusal (4 of 10 files, REFUSED(7), gate rc=0)
+#   ok   closure control: the same stage PASSES on an upgrade box — the defect is fresh-box only
+#   ok   closure: the dependency gate reports apk's real rc (3), not the negation's 0
+#   ok   closure: the package gate reports apk's real rc (3) too
+#   ok   closure: the repaired install-router.sh parses under busybox ash
+#   ok   closure: reversing the rewrite reproduces the pinned installer byte for byte
+#   ok   closure: the rewritten install-router.sh is covered by MANIFEST.sha256
+#   ok   closure: re-assembling an already-repaired installer changes nothing
+#   ok   closure: an unrecognised dependency stage is refused, naming install-router.sh
+#   57 passed, 0 failed        <- rc=0
 #
 # ---------------------------------------------------------------------------
 # Evidence — both runs executed 2026-09-27 on the offline-bundle worktree.
@@ -783,6 +848,398 @@ else
   else
     fail "fresh-box: the refusal did not name the seed: $(tail -n1 "$WORK/assemble.log")"
   fi
+fi
+
+# ------------------------------------------- E: the FRESH-BOX dependency closure
+# Hardware observation (bench MT3000, OpenWrt 25.12.5 r33051, WAN-less FRESH
+# flash, 2026-09-27 wave 3c, the released pre19 bundle WITH the fresh-box
+# keepalive repair applied): the router-side dependency stage REFUSED with exit 7
+# before it installed anything, while the bundle carried every package it needed:
+#
+#   + apk add --no-network --allow-untrusted --force-missing-repositories \
+#       <stage>/nodogsplash-5.0.2-r2.apk <stage>/jq-1.8.1-r2.apk \
+#       <stage>/libmicrohttpd-no-ssl-1.0.2-r1.apk <stage>/libpthread-1.2.5-r5.apk
+#   ERROR: unable to select packages:
+#     iptables-mod-conntrack-extra (no such package): required by nodogsplash-5.0.2-r2
+#     iptables-mod-ipopt (no such package): required by nodogsplash-5.0.2-r2
+#     iptables-mod-nat-extra (no such package): required by nodogsplash-5.0.2-r2
+#     iptables-nft (no such package): required by nodogsplash-5.0.2-r2
+#   REFUSED(7): the offline dependency install failed.
+#   gate deps_installed FAIL apk add of the dependency files failed rc=0
+#
+# Mechanism (same class as group D): stage (2) hands apk ONLY the files its
+# REQUIRED_DEPS + STUB_OK_DEPS loops name — four of the 38 the bundle stages.
+# apk-tools 3 resolves a transaction from the files NAMED on the command line
+# plus the installed DB and from nothing else, and --no-network leaves no index
+# to fall back on, so every dependency that is not named is `(no such package)`
+# and apk refuses the whole transaction. `gate bundle_closure PASS required deps
+# present:nodogsplash jq libmicrohttpd-no-ssl (38 staged package(s))` says the
+# closure was complete; the transaction was not. Only a FRESH flash could see it
+# — an upgrade box already has nodogsplash's deps installed, so the same command
+# resolves from the DB. That is also why stage (2b)'s runtime gate
+# (`iptables --version`, which nodogsplash execs at start-up) had never fired.
+#
+# This group RUNS the bundle's stage (2) on a simulated fresh box — the `apk`
+# PATH double below models apk-tools 3's resolution and the refusal, and records
+# its argv — so the assertion is behavioural, not prose: if the stage does not
+# offer the WHOLE staged closure, the double refuses and the gate fails, exactly
+# as on the bench. The as-shipped (unpatched) fixture is run the same way as a
+# control, so a passing assertion cannot be vacuous.
+E_SRC="$WORK/depstage-src"
+E_APKS="$WORK/depstage-apks"
+E_NAMES="nodogsplash-5.0.2-r2 jq-1.8.1-r2 libmicrohttpd-no-ssl-1.0.2-r1 libpthread-1.2.5-r5 iptables-nft-1.8.10-r3 xtables-nft-1.8.10-r3 libxtables-1.8.10-r3 iptables-mod-conntrack-extra-1.8.10-r3 iptables-mod-ipopt-1.8.10-r3 iptables-mod-nat-extra-1.8.10-r3"
+mkdir -p "$E_SRC/templates" "$E_APKS"
+
+# The router-side installer as the PINNED commit ships it. The stage (2)/(3) text
+# is VERBATIM from OpenTollGate/physical-router-test-automation @9de3726
+# scripts/offline/install-router.sh (blob sha256 36fe23c6…, the file the released
+# pre19 bundle staged to the bench) — trimmed to those stages.
+cat > "$E_SRC/install-router.sh" <<'FIXTURE'
+#!/bin/sh
+# fixture: the router-side installer of OFFLINE-BUNDLE-2, trimmed to the stages
+# this suite runs. Stage (2) and stage (3) below are byte-for-byte the pinned
+# text, including the wave-3 dependency-file list and its `$?` accounting.
+TGOFFLINE_VERSION="1.0.0"
+REQUIRED_DEPS="nodogsplash jq libmicrohttpd-no-ssl"
+STUB_OK_DEPS="libpthread"
+
+# =============================================================== 2. deps by path
+echo ""
+echo "=== (2) dependency packages (BY PATH, --no-network --allow-untrusted --force-missing-repositories) ==="
+dep_files=""
+for dep in $REQUIRED_DEPS; do
+    for f in $STAGED_APKS; do
+        case "$(basename "$f")" in
+            "$dep-"*) dep_files="$dep_files $f" ;;
+        esac
+    done
+done
+for dep in $STUB_OK_DEPS; do
+    for f in $STAGED_APKS; do
+        case "$(basename "$f")" in
+            "$dep-"*) dep_files="$dep_files $f" ;;
+        esac
+    done
+done
+# shellcheck disable=SC2086
+apk_deps_cmd="apk add --no-network --allow-untrusted --force-missing-repositories$dep_files"
+fact apk_deps_cmd "$apk_deps_cmd"
+# shellcheck disable=SC2086  # the dependency files must be passed BY PATH, one arg each
+echo "+ $apk_deps_cmd"
+if ! apk add --no-network --allow-untrusted --force-missing-repositories $dep_files; then
+    gate_fail deps_installed "apk add of the dependency files failed rc=$?"
+    fail_now 7 "the offline dependency install failed. On a WAN-less router this is usually a missing --force-missing-repositories, a package missing from the bundle's closure, or a package built for another arch."
+fi
+gate_pass deps_installed "installed:$REQUIRED_DEPS (stubs:$STUB_OK_DEPS)"
+
+# =============================================================== 3. package
+echo ""
+echo "=== (3) tollgate-wrt package (postinst applies the policy) ==="
+if ! apk add --no-network --allow-untrusted --force-missing-repositories "$PKG_APK"; then
+    gate_fail package_installed "apk add $APK_NAME failed rc=$?"
+    fail_now 7 "installing $APK_NAME failed."
+fi
+gate_pass package_installed "installed $APK_NAME"
+FIXTURE
+
+printf '#!/bin/sh\necho driver\n' > "$E_SRC/install-offline.sh"
+write_unsafe_keepalive "$E_SRC/templates/99z-mgmt-keepalive"
+chmod +x "$E_SRC/install-offline.sh" "$E_SRC/install-router.sh"
+for name in $E_NAMES; do printf 'fixture apk %s\n' "$name" > "$E_APKS/$name.apk"; done
+printf 'tollgate package\n' > "$E_APKS/tollgate-wrt_${VERSION}_${ARCH}.apk"
+
+python3 - "$E_APKS" "$WORK/depstage-payload.json" "$ARCH" "$VERSION" <<'PY'
+import hashlib, json, os, sys
+src, out, arch, version = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+
+
+def sha(name):
+    with open(os.path.join(src, name), "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+members = []
+for name in sorted(os.listdir(src)):
+    kind = "tollgate-package" if name.startswith("tollgate-wrt_") else "package"
+    members.append({"name": name[:-4], "kind": kind, "file": name, "sha256": sha(name),
+                    "size": os.path.getsize(os.path.join(src, name)),
+                    "path": os.path.join(src, name)})
+json.dump({"schema": 1, "release": "25.12.5", "arch": arch,
+           "target": "mediatek-filogic", "profile": "glinet_gl-mt3000",
+           "members": members, "member_count": len(members),
+           "base_provided": [{"name": "libc", "required_by": "jq"}],
+           "stubbed": [{"name": "libpthread", "required_by": "nodogsplash"}],
+           "closure_closed": True, "apks_dir": src}, open(out, "w"), indent=2)
+PY
+
+assemble_e() { # assemble_e <out-dir> [extra args...]
+  python3 "$SCRIPT" assemble --payload "$WORK/depstage-payload.json" --arch "$ARCH" \
+    --pkg-version "$VERSION" --out "$1" "${@:2}" > "$WORK/assemble-e.log" 2>&1
+}
+
+# --- the apk PATH double: apk-tools 3 on a WAN-less box, and nothing else -----
+# `add [flags] <file>.apk...` resolves every NAMED package's `depends` against
+# the NAMED files + the installed DB + the base image, and refuses the WHOLE
+# transaction when one is unresolved — the wave-3 refusal, produced by the same
+# mechanism. It records its argv so the test can assert what was offered.
+APK_FRESH="$WORK/depstage-bin"; APK_FAIL3="$WORK/depstage-bin-fail3"
+mkdir -p "$APK_FRESH" "$APK_FAIL3"
+cat > "$APK_FRESH/apk" <<'APK'
+#!/bin/sh
+set -u
+printf '%s\n' "$*" >> "${TG_APK_LOG:?}"
+depends_of() {
+    case "$1" in
+        nodogsplash-5.0.2-r2) echo "iptables-nft iptables-mod-conntrack-extra iptables-mod-ipopt iptables-mod-nat-extra libmicrohttpd-no-ssl libpthread" ;;
+        iptables-nft-1.8.10-r3) echo "libxtables xtables-nft kernel" ;;
+        xtables-nft-1.8.10-r3) echo "libxtables" ;;
+        iptables-mod-conntrack-extra-1.8.10-r3) echo "libxtables" ;;
+        iptables-mod-ipopt-1.8.10-r3) echo "libxtables" ;;
+        iptables-mod-nat-extra-1.8.10-r3) echo "libxtables" ;;
+        libxtables-1.8.10-r3) echo "libc" ;;
+        jq-1.8.1-r2) echo "libc" ;;
+        libmicrohttpd-no-ssl-1.0.2-r1) echo "libc" ;;
+        *) echo "" ;;
+    esac
+}
+BASE="libc libgcc kernel"
+[ "${1:-}" = "add" ] || exit 0
+shift
+named=""
+for a in "$@"; do
+    case "$a" in -*) continue ;; esac
+    named="$named $(basename "$a" .apk | sed 's/-[0-9].*$//')"
+done
+installed=""
+[ -f "${TG_APK_DB:-}" ] && installed="$(sed 's/-[0-9].*$//' "$TG_APK_DB" | tr '\n' ' ')"
+missing=""
+for a in "$@"; do
+    case "$a" in -*) continue ;; esac
+    name="$(basename "$a" .apk)"
+    for d in $(depends_of "$name"); do
+        case " $named $installed $BASE " in
+            *" $d "*) ;;
+            *) missing="$missing $d" ;;
+        esac
+    done
+done
+if [ -n "$missing" ]; then
+    echo "ERROR: unable to select packages:" >&2
+    for m in $missing; do echo "  $m (no such package)" >&2; done
+    exit 1
+fi
+exit 0
+APK
+chmod +x "$APK_FRESH/apk"
+cat > "$APK_FAIL3/apk" <<'APK'
+#!/bin/sh
+printf '%s\n' "$*" >> "${TG_APK_LOG:?}"
+echo "ERROR: (test double) forced apk failure" >&2
+exit 3
+APK
+chmod +x "$APK_FAIL3/apk"
+
+# Extract a stage from a router-side installer so it can be RUN on its own.
+extract_stage() { # extract_stage <install-router.sh> <out> <start-regex>
+  awk -v s="$3" '$0 ~ s { f=1 } f { print } f && /^gate_pass /{ exit }' "$1" > "$2"
+  [ -s "$2" ] && grep -q '^gate_pass ' "$2"
+}
+
+run_stage() { # run_stage <stage-file> <out-file> <apk-log> <db-file> <apk-bin-dir> [env...]
+  local stage="$1" out="$2" logf="$3" db="$4" bindir="$5"
+  local runner="$WORK/depstage-runner.sh"
+  {
+    printf '#!/bin/sh\n'
+    printf 'fact() { :; }\n'
+    printf 'gate_pass() { printf "GATE %%s PASS %%s\\n" "$1" "$2"; }\n'
+    printf 'gate_fail() { printf "GATE %%s FAIL %%s\\n" "$1" "$2"; }\n'
+    printf 'fail_now() { printf "REFUSED(%%s)\\n" "$1"; exit "$1"; }\n'
+    printf "STAGED_APKS='%s'\n" "$E_STAGED"
+    printf 'PKG_APK="%s"\nAPK_NAME="%s"\n' "$E_PKG_APK" "$(basename "$E_PKG_APK")"
+    printf 'REQUIRED_DEPS="nodogsplash jq libmicrohttpd-no-ssl"\nSTUB_OK_DEPS="libpthread"\n'
+    printf '. "%s"\n' "$stage"
+  } > "$runner"
+  : > "$logf"
+  TG_APK_LOG="$logf" TG_APK_DB="$db" PATH="$bindir:$PATH" \
+    $FB_SH "$runner" > "$out" 2>&1
+}
+
+offered_apks() { # offered_apks <apk-log> -> the .apk basenames apk was handed
+  tr ' ' '\n' < "$1" | grep -E '\.apk$' | while read -r p; do basename "$p"; done | sort
+}
+
+# ---------------------------------------------------------------------------
+if assemble_e "$WORK/out-depstage" --installer-dir "$E_SRC"; then
+  E_BUNDLE="$WORK/out-depstage/tollgate-wrt-${VERSION}-${ARCH}-offline"
+  E_IR="$E_BUNDLE/install-router.sh"
+  E_STAGED="$(find "$E_BUNDLE/pkgs" -type f -name '*.apk' | sort)"
+  E_PKG_APK="$(find "$E_BUNDLE/pkgs" -type f -name 'tollgate-wrt_*.apk' | head -n1)"
+  E_EXPECTED="$(printf '%s\n' "$E_STAGED" | grep -v 'tollgate-wrt_' | while read -r p; do basename "$p"; done | sort)"
+
+  # E1: the bundle's stage (2) no longer builds its file list from the top-level
+  #     deps; it offers the stored closure.
+  extract_stage "$E_IR" "$WORK/depstage-stage.sh" '^# =+ 2[.] deps by path$' \
+    && E_STAGE_OK=1 || E_STAGE_OK=0
+  if [ "$E_STAGE_OK" = 1 ] && grep -qF -x '# --- full-closure offer (added by the offline bundle builder) ----------------' "$WORK/depstage-stage.sh" \
+     && ! grep -q 'for dep in \$REQUIRED_DEPS' "$WORK/depstage-stage.sh"; then
+    pass "closure: the bundle's dependency stage offers the staged closure, not just the top-level deps"
+  else
+    fail "closure: the bundle's dependency stage still enumerates only REQUIRED_DEPS/STUB_OK_DEPS"
+  fi
+  if grep -qF 'apk_deps_rc=$?' "$E_IR" && grep -qF 'apk_pkg_rc=$?' "$E_IR" \
+     && ! grep -qF 'failed rc=$?' "$E_IR"; then
+    pass "closure: both apk invocations capture apk's own rc (no \`rc=$?\` inside \`if !\`)"
+  else
+    fail "closure: an apk invocation still reads \`\$?\` inside \`if !\` (the rc is the negation's 0)"
+  fi
+
+  # E2: BEHAVIOUR, fresh box, GREEN — the bundle's stage installs the whole
+  #     closure: apk is handed every staged package except the one under test,
+  #     the transaction resolves, and the gate passes.
+  : > "$WORK/depstage-db-fresh"
+  run_stage "$WORK/depstage-stage.sh" "$WORK/depstage-fresh.out" \
+            "$WORK/depstage-fresh.apklog" "$WORK/depstage-db-fresh" "$APK_FRESH"
+  E_FRESH_RC=$?
+  offered="$(offered_apks "$WORK/depstage-fresh.apklog")"
+  if [ "$offered" = "$E_EXPECTED" ]; then
+    pass "closure: the bundle's stage offers every staged package (except the one under test) to apk"
+  else
+    fail "closure: apk was offered: $(printf '%s' "$offered" | tr '\n' ' ') — expected: $(printf '%s' "$E_EXPECTED" | tr '\n' ' ')"
+  fi
+  if [ "$E_FRESH_RC" = 0 ] && grep -q '^GATE deps_installed PASS' "$WORK/depstage-fresh.out"; then
+    pass "closure: on a fresh box the whole-closure transaction resolves and deps_installed passes"
+  else
+    fail "closure: the whole-closure transaction still refuses on a fresh box (rc=$E_FRESH_RC): $(tail -n2 "$WORK/depstage-fresh.out" | tr '\n' ' ')"
+  fi
+
+  # E3: CONTROL — the AS-SHIPPED stage (the fixture, unpatched) must reproduce the
+  #     wave-3 refusal on the same fresh box, INCLUDING its rc accounting. If this
+  #     does not reproduce, E2 is vacuous.
+  extract_stage "$E_SRC/install-router.sh" "$WORK/depstage-raw.sh" '^# =+ 2[.] deps by path$' \
+    && E_RAW_OK=1 || E_RAW_OK=0
+  run_stage "$WORK/depstage-raw.sh" "$WORK/depstage-raw.out" \
+            "$WORK/depstage-raw.apklog" "$WORK/depstage-db-fresh" "$APK_FRESH"
+  E_RAW_RC=$?
+  raw_offered="$(offered_apks "$WORK/depstage-raw.apklog")"
+  printf 'nodogsplash-5.0.2-r2.apk\njq-1.8.1-r2.apk\nlibmicrohttpd-no-ssl-1.0.2-r1.apk\nlibpthread-1.2.5-r5.apk\n' > "$WORK/depstage-raw-expected"
+  if [ "$E_RAW_RC" = 7 ] && [ "$raw_offered" = "$(sort "$WORK/depstage-raw-expected")" ] \
+     && grep -q '^GATE deps_installed FAIL apk add of the dependency files failed rc=0$' "$WORK/depstage-raw.out"; then
+    pass "closure control: the as-shipped stage reproduces the wave-3 refusal (4 of 10 files, REFUSED(7), gate rc=0)"
+  else
+    fail "closure control: the as-shipped stage did NOT reproduce the wave-3 refusal (rc=$E_RAW_RC, offered: $(printf '%s' "$raw_offered" | tr '\n' ' '))"
+  fi
+
+  # E4: CONTROL — the same unpatched stage on an UPGRADE box (deps installed)
+  #     passes, which is why this defect survived the first two waves.
+  printf 'iptables-nft-1.8.10-r3\niptables-mod-conntrack-extra-1.8.10-r3\niptables-mod-ipopt-1.8.10-r3\niptables-mod-nat-extra-1.8.10-r3\nlibxtables-1.8.10-r3\nxtables-nft-1.8.10-r3\n' > "$WORK/depstage-db-upgrade"
+  run_stage "$WORK/depstage-raw.sh" "$WORK/depstage-upgrade.out" \
+            "$WORK/depstage-upgrade.apklog" "$WORK/depstage-db-upgrade" "$APK_FRESH"
+  E_UP_RC=$?
+  if [ "$E_UP_RC" = 0 ] && grep -q '^GATE deps_installed PASS' "$WORK/depstage-upgrade.out"; then
+    pass "closure control: the same stage PASSES on an upgrade box — the defect is fresh-box only"
+  else
+    fail "closure control: the unpatched stage also fails on an upgrade box (rc=$E_UP_RC) — the fixture does not model the bench"
+  fi
+
+  # E5: rc ACCOUNTING, GREEN — force apk to fail with 3 and the gate must say 3.
+  run_stage "$WORK/depstage-stage.sh" "$WORK/depstage-f5.out" \
+            "$WORK/depstage-f5.apklog" "$WORK/depstage-db-fresh" "$APK_FAIL3"
+  E_F5_RC=$?
+  if [ "$E_F5_RC" = 7 ] && grep -q '^GATE deps_installed FAIL apk add of the dependency files failed rc=3$' "$WORK/depstage-f5.out"; then
+    pass "closure: the dependency gate reports apk's real rc (3), not the negation's 0"
+  else
+    fail "closure: the dependency gate misreports the rc (rc=$E_F5_RC): $(grep '^GATE ' "$WORK/depstage-f5.out" | tr '\n' ' ')"
+  fi
+  # ... and the same for the package stage (stage 3), same defect class.
+  extract_stage "$E_IR" "$WORK/depstage-pkg.sh" '^# =+ 3[.] package$' \
+    && E_PKG_OK=1 || E_PKG_OK=0
+  run_stage "$WORK/depstage-pkg.sh" "$WORK/depstage-f6.out" \
+            "$WORK/depstage-f6.apklog" "$WORK/depstage-db-fresh" "$APK_FAIL3"
+  E_F6_RC=$?
+  if [ "$E_PKG_OK" = 1 ] && [ "$E_F6_RC" = 7 ] \
+     && grep -q "^GATE package_installed FAIL apk add $(basename "$E_PKG_APK") failed rc=3\$" "$WORK/depstage-f6.out"; then
+    pass "closure: the package gate reports apk's real rc (3) too"
+  else
+    fail "closure: the package gate misreports the rc (rc=$E_F6_RC): $(grep '^GATE ' "$WORK/depstage-f6.out" | tr '\n' ' ')"
+  fi
+
+  # E6: the repaired installer stays valid shell AND still passes the shell the
+  #     router ships.
+  if $FB_SH -n "$E_BUNDLE/install-router.sh" >/dev/null 2>&1; then
+    pass "closure: the repaired install-router.sh parses under $FB_SH"
+  else
+    fail "closure: the repaired install-router.sh does not parse under $FB_SH"
+  fi
+
+  # E7: the rewrite is EXACT — reversing it must give back the pinned file byte
+  #     for byte (so nothing else in the installer is touched), and the bundle's
+  #     manifest covers the rewritten file.
+  if python3 - "$SCRIPT" "$E_SRC/install-router.sh" "$E_BUNDLE/install-router.sh" <<'PY'
+import importlib.util, sys
+sys.dont_write_bytecode = True   # do not litter the tree with __pycache__
+spec = importlib.util.spec_from_file_location("ob", sys.argv[1])
+ob = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ob)
+shipped = open(sys.argv[3], encoding="utf-8").read()
+reversed_ = shipped
+for anchor, replacement, _ in ob.DEP_STAGE_REWRITES:
+    reversed_ = reversed_.replace(replacement, anchor)
+pinned = open(sys.argv[2], encoding="utf-8").read()
+sys.exit(0 if reversed_ == pinned else 1)
+PY
+  then
+    pass "closure: reversing the rewrite reproduces the pinned installer byte for byte"
+  else
+    fail "closure: the rewrite touched something other than the dependency stage"
+  fi
+  if (cd "$E_BUNDLE" && sha256sum --check --strict MANIFEST.sha256 >/dev/null 2>&1); then
+    pass "closure: the rewritten install-router.sh is covered by MANIFEST.sha256"
+  else
+    fail "closure: the rewritten install-router.sh broke the bundle manifest"
+  fi
+
+  # E8: idempotent — repairing an ALREADY-repaired installer is a no-op.
+  mkdir -p "$WORK/depstage-idem/templates"
+  cp "$E_BUNDLE/install-router.sh" "$WORK/depstage-idem/install-router.sh"
+  cp "$E_SRC/install-offline.sh" "$WORK/depstage-idem/install-offline.sh"
+  cp "$E_BUNDLE/templates/99z-mgmt-keepalive" "$WORK/depstage-idem/templates/99z-mgmt-keepalive"
+  if assemble_e "$WORK/out-depstage-idem" --installer-dir "$WORK/depstage-idem"; then
+    if cmp -s "$E_SRC/install-router.sh" "$WORK/depstage-idem/install-router.sh"; then
+      fail "closure: the idempotency input was NOT a repaired installer (the repair never ran)"
+    elif cmp -s "$WORK/depstage-idem/install-router.sh" \
+              "$WORK/out-depstage-idem/tollgate-wrt-${VERSION}-${ARCH}-offline/install-router.sh"; then
+      pass "closure: re-assembling an already-repaired installer changes nothing"
+    else
+      fail "closure: the rewrite ran twice on an already-repaired installer"
+    fi
+  else
+    fail "closure: assembling an already-repaired installer failed: $(tail -n2 "$WORK/assemble-e.log")"
+  fi
+
+  # E9: FAIL CLOSED — a real router-side installer whose dependency stage is NOT
+  #     the shape the rewrite can guarantee must not be shipped.
+  mkdir -p "$WORK/depstage-unknown/templates"
+  cat > "$WORK/depstage-unknown/install-router.sh" <<'UNKNOWN'
+#!/bin/sh
+TGOFFLINE_VERSION="9.9.9"
+REQUIRED_DEPS="nodogsplash jq"
+# a future upstream release with a differently shaped dependency stage
+apk add --no-network --allow-untrusted --force-missing-repositories "$PKG_DIR"/*.apk
+UNKNOWN
+  chmod +x "$WORK/depstage-unknown/install-router.sh"
+  cp "$E_SRC/install-offline.sh" "$WORK/depstage-unknown/install-offline.sh"
+  cp "$E_SRC/templates/99z-mgmt-keepalive" "$WORK/depstage-unknown/templates/99z-mgmt-keepalive"
+  if assemble_e "$WORK/out-depstage-unknown" --installer-dir "$WORK/depstage-unknown"; then
+    fail "closure: an unrecognised router-side dependency stage is shipped anyway"
+  else
+    if grep -q 'install-router.sh' "$WORK/assemble-e.log"; then
+      pass "closure: an unrecognised dependency stage is refused, naming install-router.sh"
+    else
+      fail "closure: the refusal did not name install-router.sh: $(tail -n1 "$WORK/assemble-e.log")"
+    fi
+  fi
+else
+  fail "closure: assembling the wave-3 fixture as an --installer-dir failed: $(tail -n2 "$WORK/assemble-e.log")"
 fi
 
 # ------------------------------------------------------------------ summary
