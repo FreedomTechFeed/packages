@@ -26,17 +26,25 @@
 #      establish the trust the installer asserts — while the trust check itself
 #      stays strict (a seed without 'allow tcp port 22' must still not pass).
 #   E. the FRESH-BOX dependency CLOSURE: stage (2) of install-router.sh hands apk
-#      only the files its REQUIRED_DEPS/STUB_OK_DEPS loops name — four of the 38
-#      the bundle stages — and with --no-network apk resolves a transaction from
-#      the files NAMED plus the installed DB only, so nodogsplash's deps (staged,
-#      never named) are `(no such package)` and the install REFUSES with exit 7
-#      (same bench, wave 3c, release pre19). These checks RUN the bundle's stage
-#      (2) against an `apk` PATH double that models apk-tools 3's resolution on a
-#      WAN-less fresh box, so the assertion is behavioural: if the stage does not
-#      offer the WHOLE staged closure, apk refuses and the gate fails, exactly as
-#      on the bench. The as-shipped stage is the control (wave-3 refusal on a
-#      fresh box, PASS on an upgrade box — the reason it stayed invisible), and
-#      the rc accounting is pinned too (a REFUSED(7) must not report `rc=0`).
+#      the dependency files BY PATH, and with --no-network apk resolves a
+#      transaction from the files NAMED plus the installed DB only — so a stage
+#      that names just the top-level deps REFUSES on a fresh box (nodogsplash's
+#      deps are staged but never named, hence `(no such package)`; same bench,
+#      wave 3c, release pre19). Upstream PR #178 fixed this AT THE SOURCE, so the
+#      builder no longer REWRITES the stage: it GUARDS it. The shipped
+#      install-router.sh must be byte-identical to the pin, its stage (2) must
+#      offer the WHOLE staged closure to apk, and its gate must report apk's own
+#      rc. These checks drive the builder with BOTH installer shapes: the OLD
+#      (top-level-deps) shape, which the guard must REFUSE, and the FIXED shape,
+#      which it must ACCEPT byte-identically — the FIXED stage (2) is then RUN
+#      against an `apk` PATH double that models apk-tools 3 on a WAN-less fresh
+#      box, so the assertion is behavioural, not prose. They also include the
+#      LANDMINE: the FIXED shape with the builder's marker comment DELETED — a
+#      functionally identical file the old rewrite FAILED CLOSED on — must still
+#      pass, so a benign upstream reword can never break the build. The as-shipped
+#      OLD stage is the control (wave-3 refusal on a fresh box, PASS on an upgrade
+#      box, the reason it stayed invisible), and the rc accounting is pinned too
+#      (a REFUSED(7) must not report `rc=0`).
 #
 # Group C is checked against a MUTATED copy of the real workflow as a negative
 # control, so the assertion cannot pass vacuously:
@@ -948,6 +956,110 @@ chmod +x "$E_SRC/install-offline.sh" "$E_SRC/install-router.sh"
 for name in $E_NAMES; do printf 'fixture apk %s\n' "$name" > "$E_APKS/$name.apk"; done
 printf 'tollgate package\n' > "$E_APKS/tollgate-wrt_${VERSION}_${ARCH}.apk"
 
+# ---------------------------------------------------------------------------
+# The FIXED-shape installer: the same stages as the FIXED upstream pin
+# (OpenTollGate/physical-router-test-automation @dc37d1b2 = PR #178 merge, blob
+# sha256 596e77cc…), trimmed to the stages this suite runs. Stage (2) below is
+# VERBATIM from that file (the whole-closure offer, the apk's-own-rc capture, and
+# this builder's marker comment, which upstream copied); stage (3) is its
+# apk_pkg_rc block. The guard must ACCEPT this shape and ship it byte-identical.
+E_FIX="$WORK/depstage-src-fixed"
+mkdir -p "$E_FIX/templates"
+cat > "$E_FIX/install-router.sh" <<'FIXTURE'
+#!/bin/sh
+# fixture: the router-side installer of OFFLINE-BUNDLE-2 as the FIXED upstream
+# pin ships it (@dc37d1b2, blob sha256 596e77cc…), trimmed to the stages this
+# suite runs. Stage (2) and stage (3) below are byte-for-byte that text,
+# including the whole-closure offer and the apk's-own-rc capture.
+TGOFFLINE_VERSION="1.0.0"
+REQUIRED_DEPS="nodogsplash jq libmicrohttpd-no-ssl"
+STUB_OK_DEPS="libpthread"
+
+# =============================================================== 2. deps by path
+echo ""
+echo "=== (2) dependency packages (BY PATH, --no-network --allow-untrusted --force-missing-repositories) ==="
+# --- full-closure offer (added by the offline bundle builder) ----------------
+# apk-tools 3 resolves a transaction from the files NAMED here plus the installed
+# DB, and from nothing else. With --no-network there is no feed index to fall
+# back on, so a dependency of a named package that is NOT itself named is
+# `(no such package)` and apk refuses the whole transaction — which is how a
+# fresh box got `REFUSED(7): the offline dependency install failed.` while the
+# bundle carried every package it needed. Naming only REQUIRED_DEPS+STUB_OK_DEPS
+# requires each of THEM to be base-image-complete, and nodogsplash is not
+# (iptables-nft, iptables-mod-conntrack-extra, iptables-mod-ipopt,
+# iptables-mod-nat-extra). An upgrade box already had those installed, so only a
+# fresh flash ever saw it. Offer the WHOLE staged closure in one transaction; the
+# package under test is excluded on purpose because stage (3) installs it on its
+# own, after the keepalive assertion, so the no-brick ordering is unchanged.
+dep_files=""
+for f in $STAGED_APKS; do
+    if [ "$f" != "$PKG_APK" ]; then
+        dep_files="$dep_files $f"
+    fi
+done
+# shellcheck disable=SC2086
+apk_deps_cmd="apk add --no-network --allow-untrusted --force-missing-repositories$dep_files"
+fact apk_deps_cmd "$apk_deps_cmd"
+# shellcheck disable=SC2086  # the dependency files must be passed BY PATH, one arg each
+echo "+ $apk_deps_cmd"
+# `$?` read inside `if ! cmd; then` is the NEGATION's status (0), so this gate
+# once reported a REFUSED(7) as "failed rc=0". Capture apk's own status and
+# report that; the verdict and the fail-closed behaviour are unchanged.
+apk_deps_rc=0
+apk add --no-network --allow-untrusted --force-missing-repositories $dep_files || apk_deps_rc=$?
+if [ "$apk_deps_rc" != 0 ]; then
+    gate_fail deps_installed "apk add of the dependency files failed rc=$apk_deps_rc"
+    fail_now 7 "the offline dependency install failed. On a WAN-less router this is usually a missing --force-missing-repositories, a package missing from the bundle's closure, or a package built for another arch."
+fi
+gate_pass deps_installed "installed:$REQUIRED_DEPS (stubs:$STUB_OK_DEPS)"
+
+# =============================================================== 3. package
+echo ""
+echo "=== (3) tollgate-wrt package (postinst applies the policy) ==="
+# same `$?`-inside-`if !` accounting as the dependency stage above.
+apk_pkg_rc=0
+apk add --no-network --allow-untrusted --force-missing-repositories "$PKG_APK" || apk_pkg_rc=$?
+if [ "$apk_pkg_rc" != 0 ]; then
+    gate_fail package_installed "apk add $APK_NAME failed rc=$apk_pkg_rc"
+    fail_now 7 "installing $APK_NAME failed."
+fi
+gate_pass package_installed "installed $APK_NAME"
+FIXTURE
+
+# The LANDMINE: the FIXED fixture minus ONLY the builder's marker comment line — a
+# functionally identical file (the same edit on the real pin gives sha 90167441…).
+# An earlier builder rewrote stage (2) by matching that exact comment, so deleting
+# it alone made the build FAIL CLOSED on a correct installer. The guard must not
+# care about any comment.
+E_NOMARK="$WORK/depstage-src-nomark"
+mkdir -p "$E_NOMARK/templates"
+grep -vxF '# --- full-closure offer (added by the offline bundle builder) ----------------' \
+  "$E_FIX/install-router.sh" > "$E_NOMARK/install-router.sh"
+
+# A stage that offers the whole closure but still reports apk's status with `$?`
+# read from inside `if !` (the negation's 0) — a different shape of the rc defect.
+E_RCBAD="$WORK/depstage-src-rcbad"
+mkdir -p "$E_RCBAD/templates"
+python3 - "$E_FIX/install-router.sh" "$E_RCBAD/install-router.sh" <<'PY'
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+good = ('apk_deps_rc=0\n'
+        'apk add --no-network --allow-untrusted --force-missing-repositories $dep_files || apk_deps_rc=$?\n'
+        'if [ "$apk_deps_rc" != 0 ]; then\n'
+        '    gate_fail deps_installed "apk add of the dependency files failed rc=$apk_deps_rc"\n')
+bad = ('if ! apk add --no-network --allow-untrusted --force-missing-repositories $dep_files; then\n'
+       '    gate_fail deps_installed "apk add of the dependency files failed rc=$?"\n')
+assert good in text, "fixture drift: the fixed rc block is not as expected"
+open(sys.argv[2], "w", encoding="utf-8").write(text.replace(good, bad))
+PY
+
+for d in "$E_FIX" "$E_NOMARK" "$E_RCBAD"; do
+  printf '#!/bin/sh\necho driver\n' > "$d/install-offline.sh"
+  write_unsafe_keepalive "$d/templates/99z-mgmt-keepalive"
+  chmod +x "$d/install-offline.sh" "$d/install-router.sh"
+done
+
+
 python3 - "$E_APKS" "$WORK/depstage-payload.json" "$ARCH" "$VERSION" <<'PY'
 import hashlib, json, os, sys
 src, out, arch, version = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
@@ -1069,39 +1181,59 @@ offered_apks() { # offered_apks <apk-log> -> the .apk basenames apk was handed
 }
 
 # ---------------------------------------------------------------------------
-if assemble_e "$WORK/out-depstage" --installer-dir "$E_SRC"; then
-  E_BUNDLE="$WORK/out-depstage/tollgate-wrt-${VERSION}-${ARCH}-offline"
+# ---------------------------------------------------------------------------
+# G1: GUARD non-vacuity — the OLD-shape stage (top-level deps only) must be
+#     REFUSED. If the guard shipped it anyway, a bundle whose dependency stage
+#     refuses on a fresh box would go out. This is the guard's negative control.
+if assemble_e "$WORK/out-depstage-old" --installer-dir "$E_SRC"; then
+  fail "guard: the OLD-shape dependency stage (top-level deps only) was shipped anyway"
+elif grep -qF 'install-router.sh' "$WORK/assemble-e.log" \
+     && grep -qF 'REQUIRED_DEPS' "$WORK/assemble-e.log" \
+     && grep -qF 'OFFLINE_INSTALLER_REF' "$WORK/assemble-e.log"; then
+  pass "guard: the OLD-shape dependency stage is refused, naming install-router.sh, the top-level deps and the re-pin"
+else
+  fail "guard: the OLD-shape refusal was not actionable: $(tail -n1 "$WORK/assemble-e.log")"
+fi
+
+# G2: the guard also pins the rc accounting: a stage that offers the whole closure
+#     but reports `$?` from inside `if !` (the negation's 0) is refused.
+if assemble_e "$WORK/out-depstage-rcbad" --installer-dir "$E_RCBAD"; then
+  fail "guard: a dependency stage that reports the negation's rc (\`\$?\` inside \`if !\`) was shipped anyway"
+elif grep -qF "does not capture apk's own status" "$WORK/assemble-e.log"; then
+  pass "guard: a dependency stage that does not report apk's own rc is refused"
+else
+  fail "guard: the rc-accounting refusal was not actionable: $(tail -n1 "$WORK/assemble-e.log")"
+fi
+
+# G3: the guard PASSES the FIXED-shape stage and ships it byte-identically.
+if assemble_e "$WORK/out-depstage-fixed" --installer-dir "$E_FIX"; then
+  E_BUNDLE="$WORK/out-depstage-fixed/tollgate-wrt-${VERSION}-${ARCH}-offline"
   E_IR="$E_BUNDLE/install-router.sh"
   E_STAGED="$(find "$E_BUNDLE/pkgs" -type f -name '*.apk' | sort)"
   E_PKG_APK="$(find "$E_BUNDLE/pkgs" -type f -name 'tollgate-wrt_*.apk' | head -n1)"
   E_EXPECTED="$(printf '%s\n' "$E_STAGED" | grep -v 'tollgate-wrt_' | while read -r p; do basename "$p"; done | sort)"
 
-  # E1: the bundle's stage (2) no longer builds its file list from the top-level
-  #     deps; it offers the stored closure.
-  extract_stage "$E_IR" "$WORK/depstage-stage.sh" '^# =+ 2[.] deps by path$' \
-    && E_STAGE_OK=1 || E_STAGE_OK=0
-  if [ "$E_STAGE_OK" = 1 ] && grep -qF -x '# --- full-closure offer (added by the offline bundle builder) ----------------' "$WORK/depstage-stage.sh" \
-     && ! grep -q 'for dep in \$REQUIRED_DEPS' "$WORK/depstage-stage.sh"; then
-    pass "closure: the bundle's dependency stage offers the staged closure, not just the top-level deps"
+  pass "guard: the FIXED-shape dependency stage (whole staged closure) is accepted"
+
+  # BYTE-IDENTITY: the shipped installer must equal the pinned source byte for
+  # byte — the whole point of replacing the rewrite with a guard.
+  if cmp -s "$E_FIX/install-router.sh" "$E_IR"; then
+    pass "guard: the shipped install-router.sh is BYTE-IDENTICAL to the pinned source"
   else
-    fail "closure: the bundle's dependency stage still enumerates only REQUIRED_DEPS/STUB_OK_DEPS"
-  fi
-  if grep -qF 'apk_deps_rc=$?' "$E_IR" && grep -qF 'apk_pkg_rc=$?' "$E_IR" \
-     && ! grep -qF 'failed rc=$?' "$E_IR"; then
-    pass "closure: both apk invocations capture apk's own rc (no \`rc=$?\` inside \`if !\`)"
-  else
-    fail "closure: an apk invocation still reads \`\$?\` inside \`if !\` (the rc is the negation's 0)"
+    fail "guard: the shipped install-router.sh differs from the pinned source"
   fi
 
-  # E2: BEHAVIOUR, fresh box, GREEN — the bundle's stage installs the whole
+  # E2: BEHAVIOUR, fresh box, GREEN — the shipped stage installs the whole
   #     closure: apk is handed every staged package except the one under test,
   #     the transaction resolves, and the gate passes.
   : > "$WORK/depstage-db-fresh"
+  extract_stage "$E_IR" "$WORK/depstage-stage.sh" '^# =+ 2[.] deps by path$' \
+    && E_STAGE_OK=1 || E_STAGE_OK=0
   run_stage "$WORK/depstage-stage.sh" "$WORK/depstage-fresh.out" \
             "$WORK/depstage-fresh.apklog" "$WORK/depstage-db-fresh" "$APK_FRESH"
   E_FRESH_RC=$?
   offered="$(offered_apks "$WORK/depstage-fresh.apklog")"
-  if [ "$offered" = "$E_EXPECTED" ]; then
+  if [ "$E_STAGE_OK" = 1 ] && [ "$offered" = "$E_EXPECTED" ]; then
     pass "closure: the bundle's stage offers every staged package (except the one under test) to apk"
   else
     fail "closure: apk was offered: $(printf '%s' "$offered" | tr '\n' ' ') — expected: $(printf '%s' "$E_EXPECTED" | tr '\n' ' ')"
@@ -1112,9 +1244,10 @@ if assemble_e "$WORK/out-depstage" --installer-dir "$E_SRC"; then
     fail "closure: the whole-closure transaction still refuses on a fresh box (rc=$E_FRESH_RC): $(tail -n2 "$WORK/depstage-fresh.out" | tr '\n' ' ')"
   fi
 
-  # E3: CONTROL — the AS-SHIPPED stage (the fixture, unpatched) must reproduce the
-  #     wave-3 refusal on the same fresh box, INCLUDING its rc accounting. If this
-  #     does not reproduce, E2 is vacuous.
+  # E3/E4: CONTROLS — the AS-SHIPPED (old-shape) stage on the same fresh box must
+  #     reproduce the wave-3 refusal INCLUDING its rc accounting (else E2 is
+  #     vacuous), and must PASS on an upgrade box, which is why the defect
+  #     survived the first two waves.
   extract_stage "$E_SRC/install-router.sh" "$WORK/depstage-raw.sh" '^# =+ 2[.] deps by path$' \
     && E_RAW_OK=1 || E_RAW_OK=0
   run_stage "$WORK/depstage-raw.sh" "$WORK/depstage-raw.out" \
@@ -1128,9 +1261,6 @@ if assemble_e "$WORK/out-depstage" --installer-dir "$E_SRC"; then
   else
     fail "closure control: the as-shipped stage did NOT reproduce the wave-3 refusal (rc=$E_RAW_RC, offered: $(printf '%s' "$raw_offered" | tr '\n' ' '))"
   fi
-
-  # E4: CONTROL — the same unpatched stage on an UPGRADE box (deps installed)
-  #     passes, which is why this defect survived the first two waves.
   printf 'iptables-nft-1.8.10-r3\niptables-mod-conntrack-extra-1.8.10-r3\niptables-mod-ipopt-1.8.10-r3\niptables-mod-nat-extra-1.8.10-r3\nlibxtables-1.8.10-r3\nxtables-nft-1.8.10-r3\n' > "$WORK/depstage-db-upgrade"
   run_stage "$WORK/depstage-raw.sh" "$WORK/depstage-upgrade.out" \
             "$WORK/depstage-upgrade.apklog" "$WORK/depstage-db-upgrade" "$APK_FRESH"
@@ -1141,7 +1271,7 @@ if assemble_e "$WORK/out-depstage" --installer-dir "$E_SRC"; then
     fail "closure control: the unpatched stage also fails on an upgrade box (rc=$E_UP_RC) — the fixture does not model the bench"
   fi
 
-  # E5: rc ACCOUNTING, GREEN — force apk to fail with 3 and the gate must say 3.
+  # E5/E6: rc ACCOUNTING, GREEN — force apk to fail with 3 and each gate must say 3.
   run_stage "$WORK/depstage-stage.sh" "$WORK/depstage-f5.out" \
             "$WORK/depstage-f5.apklog" "$WORK/depstage-db-fresh" "$APK_FAIL3"
   E_F5_RC=$?
@@ -1150,7 +1280,6 @@ if assemble_e "$WORK/out-depstage" --installer-dir "$E_SRC"; then
   else
     fail "closure: the dependency gate misreports the rc (rc=$E_F5_RC): $(grep '^GATE ' "$WORK/depstage-f5.out" | tr '\n' ' ')"
   fi
-  # ... and the same for the package stage (stage 3), same defect class.
   extract_stage "$E_IR" "$WORK/depstage-pkg.sh" '^# =+ 3[.] package$' \
     && E_PKG_OK=1 || E_PKG_OK=0
   run_stage "$WORK/depstage-pkg.sh" "$WORK/depstage-f6.out" \
@@ -1163,83 +1292,71 @@ if assemble_e "$WORK/out-depstage" --installer-dir "$E_SRC"; then
     fail "closure: the package gate misreports the rc (rc=$E_F6_RC): $(grep '^GATE ' "$WORK/depstage-f6.out" | tr '\n' ' ')"
   fi
 
-  # E6: the repaired installer stays valid shell AND still passes the shell the
-  #     router ships.
-  if $FB_SH -n "$E_BUNDLE/install-router.sh" >/dev/null 2>&1; then
-    pass "closure: the repaired install-router.sh parses under $FB_SH"
+  # E7: the shipped installer stays valid shell and is covered by the manifest.
+  if $FB_SH -n "$E_IR" >/dev/null 2>&1; then
+    pass "closure: the shipped install-router.sh parses under $FB_SH"
   else
-    fail "closure: the repaired install-router.sh does not parse under $FB_SH"
+    fail "closure: the shipped install-router.sh does not parse under $FB_SH"
+  fi
+  if (cd "$E_BUNDLE" && sha256sum --check --strict MANIFEST.sha256 >/dev/null 2>&1) \
+     && grep -q 'install-router.sh' "$E_BUNDLE/MANIFEST.sha256"; then
+    pass "closure: the shipped install-router.sh is covered by MANIFEST.sha256"
+  else
+    fail "closure: the bundle manifest does not cover the shipped install-router.sh"
   fi
 
-  # E7: the rewrite is EXACT — reversing it must give back the pinned file byte
-  #     for byte (so nothing else in the installer is touched), and the bundle's
-  #     manifest covers the rewritten file.
-  if python3 - "$SCRIPT" "$E_SRC/install-router.sh" "$E_BUNDLE/install-router.sh" <<'PY'
-import importlib.util, sys
-sys.dont_write_bytecode = True   # do not litter the tree with __pycache__
-spec = importlib.util.spec_from_file_location("ob", sys.argv[1])
-ob = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(ob)
-shipped = open(sys.argv[3], encoding="utf-8").read()
-reversed_ = shipped
-for anchor, replacement, _ in ob.DEP_STAGE_REWRITES:
-    reversed_ = reversed_.replace(replacement, anchor)
-pinned = open(sys.argv[2], encoding="utf-8").read()
-sys.exit(0 if reversed_ == pinned else 1)
-PY
-  then
-    pass "closure: reversing the rewrite reproduces the pinned installer byte for byte"
-  else
-    fail "closure: the rewrite touched something other than the dependency stage"
-  fi
-  if (cd "$E_BUNDLE" && sha256sum --check --strict MANIFEST.sha256 >/dev/null 2>&1); then
-    pass "closure: the rewritten install-router.sh is covered by MANIFEST.sha256"
-  else
-    fail "closure: the rewritten install-router.sh broke the bundle manifest"
-  fi
-
-  # E8: idempotent — repairing an ALREADY-repaired installer is a no-op.
-  mkdir -p "$WORK/depstage-idem/templates"
-  cp "$E_BUNDLE/install-router.sh" "$WORK/depstage-idem/install-router.sh"
-  cp "$E_SRC/install-offline.sh" "$WORK/depstage-idem/install-offline.sh"
-  cp "$E_BUNDLE/templates/99z-mgmt-keepalive" "$WORK/depstage-idem/templates/99z-mgmt-keepalive"
-  if assemble_e "$WORK/out-depstage-idem" --installer-dir "$WORK/depstage-idem"; then
-    if cmp -s "$E_SRC/install-router.sh" "$WORK/depstage-idem/install-router.sh"; then
-      fail "closure: the idempotency input was NOT a repaired installer (the repair never ran)"
-    elif cmp -s "$WORK/depstage-idem/install-router.sh" \
+  # E8: idempotent — re-assembling the same (already-guarded) installer changes
+  #     nothing (the guard never writes to the file).
+  if assemble_e "$WORK/out-depstage-idem" --installer-dir "$E_FIX"; then
+    if cmp -s "$E_IR" \
               "$WORK/out-depstage-idem/tollgate-wrt-${VERSION}-${ARCH}-offline/install-router.sh"; then
-      pass "closure: re-assembling an already-repaired installer changes nothing"
+      pass "closure: re-assembling an already-guarded installer changes nothing"
     else
-      fail "closure: the rewrite ran twice on an already-repaired installer"
+      fail "closure: re-assembling changed the shipped installer"
     fi
   else
-    fail "closure: assembling an already-repaired installer failed: $(tail -n2 "$WORK/assemble-e.log")"
+    fail "closure: re-assembling the already-guarded installer failed: $(tail -n2 "$WORK/assemble-e.log")"
   fi
+else
+  fail "guard: the FIXED-shape dependency stage was REFUSED: $(tail -n2 "$WORK/assemble-e.log")"
+fi
 
-  # E9: FAIL CLOSED — a real router-side installer whose dependency stage is NOT
-  #     the shape the rewrite can guarantee must not be shipped.
-  mkdir -p "$WORK/depstage-unknown/templates"
-  cat > "$WORK/depstage-unknown/install-router.sh" <<'UNKNOWN'
+# --- G4: the LANDMINE regression that justifies the guard --------------------
+# Delete ONLY the builder's marker comment line from the FIXED installer — a
+# functionally identical file. An earlier builder rewrote stage (2) by matching
+# that exact comment, so deleting it alone made the build FAIL CLOSED on a correct
+# installer. The guard must still PASS and still ship it byte-identical.
+if assemble_e "$WORK/out-depstage-nomark" --installer-dir "$E_NOMARK"; then
+  pass "landmine: the FIXED stage with the builder's marker comment DELETED is still accepted"
+  if cmp -s "$E_NOMARK/install-router.sh" \
+            "$WORK/out-depstage-nomark/tollgate-wrt-${VERSION}-${ARCH}-offline/install-router.sh"; then
+    pass "landmine: the marker-deleted installer is shipped byte-identical"
+  else
+    fail "landmine: the marker-deleted installer was modified on the way out"
+  fi
+else
+  fail "landmine: deleting the builder's marker comment broke the build: $(tail -n2 "$WORK/assemble-e.log")"
+fi
+
+# --- G5: FAIL CLOSED — a real router-side installer with NO stage-(2) region --
+mkdir -p "$WORK/depstage-unknown/templates"
+cat > "$WORK/depstage-unknown/install-router.sh" <<'UNKNOWN'
 #!/bin/sh
 TGOFFLINE_VERSION="9.9.9"
 REQUIRED_DEPS="nodogsplash jq"
 # a future upstream release with a differently shaped dependency stage
 apk add --no-network --allow-untrusted --force-missing-repositories "$PKG_DIR"/*.apk
 UNKNOWN
-  chmod +x "$WORK/depstage-unknown/install-router.sh"
-  cp "$E_SRC/install-offline.sh" "$WORK/depstage-unknown/install-offline.sh"
-  cp "$E_SRC/templates/99z-mgmt-keepalive" "$WORK/depstage-unknown/templates/99z-mgmt-keepalive"
-  if assemble_e "$WORK/out-depstage-unknown" --installer-dir "$WORK/depstage-unknown"; then
-    fail "closure: an unrecognised router-side dependency stage is shipped anyway"
-  else
-    if grep -q 'install-router.sh' "$WORK/assemble-e.log"; then
-      pass "closure: an unrecognised dependency stage is refused, naming install-router.sh"
-    else
-      fail "closure: the refusal did not name install-router.sh: $(tail -n1 "$WORK/assemble-e.log")"
-    fi
-  fi
+chmod +x "$WORK/depstage-unknown/install-router.sh"
+cp "$E_SRC/install-offline.sh" "$WORK/depstage-unknown/install-offline.sh"
+cp "$E_SRC/templates/99z-mgmt-keepalive" "$WORK/depstage-unknown/templates/99z-mgmt-keepalive"
+if assemble_e "$WORK/out-depstage-unknown" --installer-dir "$WORK/depstage-unknown"; then
+  fail "closure: an unrecognised router-side dependency stage is shipped anyway"
+elif grep -qF 'install-router.sh' "$WORK/assemble-e.log" \
+     && grep -qF 'OFFLINE_INSTALLER_REF' "$WORK/assemble-e.log"; then
+  pass "closure: an unrecognised dependency stage is refused, naming install-router.sh"
 else
-  fail "closure: assembling the wave-3 fixture as an --installer-dir failed: $(tail -n2 "$WORK/assemble-e.log")"
+  fail "closure: the refusal did not name install-router.sh: $(tail -n1 "$WORK/assemble-e.log")"
 fi
 
 # ------------------------------------------------------------------ summary

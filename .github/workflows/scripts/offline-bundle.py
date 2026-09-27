@@ -53,23 +53,35 @@ SUBCOMMANDS
 
 WHAT THE BUILDER GUARANTEES IN THE SHIPPED INSTALLER
 ----------------------------------------------------
-The installer directory is PINNED (OFFLINE_INSTALLER_REF) and shipped verbatim
-except for two fresh-box repairs the builder applies to the staged copy, both
-idempotent and both required before the bundle may be published:
+The installer directory is PINNED (OFFLINE_INSTALLER_REF) and shipped VERBATIM,
+byte for byte. The builder applies exactly ONE fresh-box repair to the staged
+copy (idempotent, required before the bundle may be published) and GUARDS one
+further invariant WITHOUT ever editing the file:
 
   repair_keepalive_seed    the management keepalive seed must be able to create
                            the anonymous nodogsplash section it writes to (a
                            fresh flash has no /etc/config/nodogsplash yet)
-  repair_router_dep_stage  stage (2) of install-router.sh must offer the WHOLE
+
+  guard_router_dep_stage   stage (2) of install-router.sh must offer the WHOLE
                            staged closure to apk in one --no-network transaction
                            (apk-tools 3 resolves from the files NAMED plus the
                            installed DB only, so a stage that names just the
-                           top-level deps REFUSES on a fresh box), and its gates
-                           must report apk's own rc
+                           top-level deps REFUSES on a fresh box), and its gate
+                           must report apk's own rc. Upstream PR #178 fixed this
+                           AT THE SOURCE, so on the current pin the guard passes
+                           and the shipped install-router.sh is byte-identical to
+                           the pinned source; the guard never rewrites the file.
 
-Both repairs fail the build closed when the pinned installer is a REAL
-router-side installer that is not the shape they can guarantee; a fixture or
-synthetic driver is passed through untouched.
+The guard is SEMANTIC and COMMENT-INDEPENDENT: it locates the stage by its own
+banner and judges what the stage DOES, so it is blind to comments, to
+whitespace-only differences and to upstream rewording (an earlier version
+rewrote the stage by matching an exact text block plus a marker comment; a
+reworded upstream comment made it fail closed on a correct installer, so it was
+replaced by this guard).
+
+Both the repair and the guard fail the build closed when the pinned installer is
+a REAL router-side installer that is not the shape they can guarantee; a fixture
+or synthetic driver is passed through untouched.
 
 EXIT STATUS: 0 = success, 1 = fail closed (the reason is printed with a
 `::error::` prefix and named in the closure report), 2 = usage error.
@@ -186,6 +198,9 @@ fi
 # why stage (2b)'s runtime gate (`iptables --version`, which nodogsplash execs at
 # start-up) could never have been reached on a fresh box by an apk that did
 # succeed. The stage must offer the whole staged closure, not the top level.
+# Upstream PR #178 fixed this at the source, so the builder now GUARDS it
+# (guard_router_dep_stage) instead of rewriting the stage: the shipped
+# install-router.sh is byte-identical to the pin.
 ROUTER_INSTALLER_NAME = "install-router.sh"
 
 # Positive fingerprint of the real OFFLINE-BUNDLE-2 router half. A fixture or
@@ -194,95 +209,22 @@ ROUTER_INSTALLER_NAME = "install-router.sh"
 # fail the build closed rather than ship a bundle that refuses on a fresh box.
 ROUTER_INSTALLER_FINGERPRINT = ("TGOFFLINE_VERSION=", "apk add --no-network")
 
-# Marker: this substring means the full-closure rewrite already ran, so the
-# repair below is idempotent.
-DEP_CLOSURE_MARK = (
-    "# --- full-closure offer (added by the offline bundle builder)")
+# Positive fingerprint of the real OFFLINE-BUNDLE-2 router half. A fixture or
+# synthetic driver (the unit tests use both) must be passed through untouched; a
+# REAL router-side installer whose dependency stage is not the shape below must
+# fail the build closed rather than ship a bundle that refuses on a fresh box.
+# Both fragments are shell CODE, not comments, so the fingerprint cannot be
+# reworded away without changing behaviour.
+ROUTER_INSTALLER_FINGERPRINT = ("TGOFFLINE_VERSION=", "apk add --no-network")
 
-# The dependency file list EXACTLY as the pinned installer builds it (the two
-# loops enumerate REQUIRED_DEPS and STUB_OK_DEPS only).
-DEP_STAGE_ANCHOR = """\
-dep_files=""
-for dep in $REQUIRED_DEPS; do
-    for f in $STAGED_APKS; do
-        case "$(basename "$f")" in
-            "$dep-"*) dep_files="$dep_files $f" ;;
-        esac
-    done
-done
-for dep in $STUB_OK_DEPS; do
-    for f in $STAGED_APKS; do
-        case "$(basename "$f")" in
-            "$dep-"*) dep_files="$dep_files $f" ;;
-        esac
-    done
-done
-"""
-
-DEP_STAGE_REPLACEMENT = """\
-# --- full-closure offer (added by the offline bundle builder) ----------------
-# apk-tools 3 resolves a transaction from the files NAMED here plus the installed
-# DB, and from nothing else. With --no-network there is no feed index to fall
-# back on, so a dependency of a named package that is NOT itself named is
-# `(no such package)` and apk refuses the whole transaction — which is how a
-# fresh box got `REFUSED(7): the offline dependency install failed.` while the
-# bundle carried every package it needed. Naming only REQUIRED_DEPS+STUB_OK_DEPS
-# requires each of THEM to be base-image-complete, and nodogsplash is not
-# (iptables-nft, iptables-mod-conntrack-extra, iptables-mod-ipopt,
-# iptables-mod-nat-extra). An upgrade box already had those installed, so only a
-# fresh flash ever saw it. Offer the WHOLE staged closure in one transaction; the
-# package under test is excluded on purpose because stage (3) installs it on its
-# own, after the keepalive assertion, so the no-brick ordering is unchanged.
-dep_files=""
-for f in $STAGED_APKS; do
-    if [ "$f" != "$PKG_APK" ]; then
-        dep_files="$dep_files $f"
-    fi
-done
-"""
-
-# The rc-accounting bug: inside `if ! cmd; then`, `$?` is the status of the
-# NEGATION (0), so a REFUSED(7) reported itself as "failed rc=0" — a failure
-# verdict carrying a success code, which reads as a passing install to anything
-# that parses the gate lines.
-DEP_RC_ANCHOR = """\
-if ! apk add --no-network --allow-untrusted --force-missing-repositories $dep_files; then
-    gate_fail deps_installed "apk add of the dependency files failed rc=$?"
-"""
-
-DEP_RC_REPLACEMENT = """\
-# `$?` read inside `if ! cmd; then` is the NEGATION's status (0), so this gate
-# once reported a REFUSED(7) as "failed rc=0". Capture apk's own status and
-# report that; the verdict and the fail-closed behaviour are unchanged.
-apk_deps_rc=0
-apk add --no-network --allow-untrusted --force-missing-repositories $dep_files || apk_deps_rc=$?
-if [ "$apk_deps_rc" != 0 ]; then
-    gate_fail deps_installed "apk add of the dependency files failed rc=$apk_deps_rc"
-"""
-
-# The same `$?`-inside-`if !` accounting exists one stage later, on the package
-# install; same defect class, same fix.
-PKG_RC_ANCHOR = """\
-if ! apk add --no-network --allow-untrusted --force-missing-repositories "$PKG_APK"; then
-    gate_fail package_installed "apk add $APK_NAME failed rc=$?"
-"""
-
-PKG_RC_REPLACEMENT = """\
-# same `$?`-inside-`if !` accounting as the dependency stage above.
-apk_pkg_rc=0
-apk add --no-network --allow-untrusted --force-missing-repositories "$PKG_APK" || apk_pkg_rc=$?
-if [ "$apk_pkg_rc" != 0 ]; then
-    gate_fail package_installed "apk add $APK_NAME failed rc=$apk_pkg_rc"
-"""
-
-DEP_STAGE_REWRITES = (
-    (DEP_STAGE_ANCHOR, DEP_STAGE_REPLACEMENT,
-     "dependency file list (stage 2)"),
-    (DEP_RC_ANCHOR, DEP_RC_REPLACEMENT,
-     "dependency-stage rc accounting (stage 2)"),
-    (PKG_RC_ANCHOR, PKG_RC_REPLACEMENT,
-     "package-stage rc accounting (stage 3)"),
-)
+# The stage-(2) dependency-install region is located SEMANTICALLY: from the line
+# that announces stage (2) (`=== (2) dependency packages ...`) up to and
+# including that stage's `gate_pass deps_installed` line. No comment, marker or
+# exact text block is involved, so upstream may reword comments or reindent
+# freely without changing the guard's verdict.
+DEP_STAGE_BANNER_RE = re.compile(
+    r"\(\s*2\s*\)[^\n]*dependenc|dependenc[^\n]*\(\s*2\s*\)", re.IGNORECASE)
+DEP_STAGE_END_RE = re.compile(r"^\s*gate_pass\s+deps_installed\b", re.MULTILINE)
 
 
 class Fail(Exception):
@@ -1215,90 +1157,187 @@ def repair_keepalive_seed(bundle_dir):
             "section when absent), sha256 %s" % sha256_file(path))
 
 
-def repair_router_dep_stage(bundle_dir):
-    """Make the bundle's router-side DEPENDENCY stage fresh-box installable.
+def _normalise_sh(text):
+    """Return `text` as a comment-free, whitespace-collapsed shell token stream.
 
-    Returns a one-line note for the installer provenance block, or "" when there
-    is nothing to repair: no router-side installer in this bundle, or the file is
-    a fixture/synthetic driver rather than the OFFLINE-BUNDLE-2 router half.
+    The dep-stage guard must be blind to comments and to whitespace-only
+    differences: upstream may reword or drop any comment (this builder's own
+    marker comment was copied verbatim into the upstream fix and survives today,
+    but nothing may depend on that), and a reindent must not change the verdict.
+    Dropping full-line comments and collapsing every whitespace run to one space
+    leaves the sequence of shell WORDS, which is what the guard judges.
+    """
+    kept = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
+    return " ".join(" ".join(kept).split())
 
-    Stage (2) of the pinned install-router.sh hands apk the dependency files BY
-    PATH, built from REQUIRED_DEPS + STUB_OK_DEPS. apk-tools 3 resolves a
-    transaction from the files NAMED on the command line plus the installed DB,
-    and from nothing else — with --no-network a WAN-less box has no index to fall
-    back on, so every dependency of a named package that is not itself named is
-    `(no such package)` and apk refuses the WHOLE transaction. The bundle's
-    closure is complete (the builder resolved and staged all of it, and gate
-    `bundle_closure` asserts the required deps are present); the stage simply
-    never offered the rest of it. On an UPGRADE box nodogsplash's deps are already
-    installed, so the transaction resolves from the DB and the stage looks
-    correct — which is why a fresh flash was the first box to refuse with
+
+def dep_stage_region(text):
+    """Return the stage-(2) dependency-install region of a router installer, or None.
+
+    The region runs from the line that announces stage (2) (the banner
+    `=== (2) dependency packages ...`) up to and INCLUDING that stage's
+    `gate_pass deps_installed` line. It is found by the banner and the gate line
+    alone — never by a comment, a marker or an exact text block.
+    """
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if DEP_STAGE_BANNER_RE.search(line):
+            start = i
+            break
+    if start is None:
+        return None
+    for j in range(start, len(lines)):
+        if DEP_STAGE_END_RE.match(lines[j]):
+            return "\n".join(lines[start:j + 1])
+    return None
+
+
+def _dep_stage_offers_closure(norm):
+    """Judge a NORMALISED stage-(2) region. Returns (ok, why_not).
+
+    `why_not` is a human-readable reason on failure so the guard can say what it
+    expected and what it found. The three things this asserts, all by behaviour:
+
+      1. the package list is built from the WHOLE staged set (`for ... in
+         $STAGED_APKS`) and NOT from the top-level deps, excluding the package
+         under test (stage (3) installs it on its own, after the keepalive
+         assertion, so the no-brick ordering is unchanged);
+      2. the gate reports apk's OWN rc, captured from the apk add command, not
+         `$?` read inside `if !` (which is the NEGATION's status, 0).
+    """
+    # (a) it must not still enumerate the top-level deps instead of the closure.
+    for top in ("REQUIRED_DEPS", "STUB_OK_DEPS"):
+        if re.search(r"for\s+\w+\s+in\s+\$%s\b" % top, norm):
+            return False, ("it still enumerates $%s, i.e. it names only the "
+                           "top-level deps rather than the whole staged "
+                           "closure" % top)
+
+    # (b) the file list must be built from the whole staged set ...
+    loop = re.search(r"for\s+(\w+)\s+in\s+\$STAGED_APKS\s*;\s*do", norm)
+    if not loop:
+        return False, ("it never iterates $STAGED_APKS, so it cannot offer the "
+                       "whole staged closure to apk")
+    var = re.escape(loop.group(1))
+    # ... excluding the package under test (installed separately by stage (3)).
+    if not re.search(r"\[\s*\"\$%s\"\s*!=\s*\"\$PKG_APK\"\s*\]" % var, norm):
+        return False, ("its $STAGED_APKS loop variable (%s) is never compared "
+                       "against \"$PKG_APK\", so the package under test is not "
+                       "excluded from the dependency transaction"
+                       % loop.group(1))
+
+    # (c) the gate must report apk's OWN rc, captured from the command ...
+    cap = re.search(r"\|\|\s*(\w+)=\$\?", norm)
+    if not cap:
+        return False, ("it does not capture apk's own status from the apk add "
+                       "command (`|| <rc>=$?`)")
+    rc = re.escape(cap.group(1))
+    if not re.search(r"\[\s*\"\$%s\"\s*!=\s*0\s*\]" % rc, norm):
+        return False, ("it captures %s but never gates on it" % cap.group(1))
+    if not re.search(r"rc=\$%s\b" % rc, norm):
+        return False, ("its failure report does not print the captured rc (%s)"
+                       % cap.group(1))
+    # ... and it must not read `$?` inside `if ! cmd` (that is the negation's 0).
+    # `(?<!\w)` keeps this from matching the tail of a captured `..._rc=$?`.
+    if re.search(r"(?<!\w)rc=\$\?", norm):
+        return False, ("its failure report still reads `$?` inside `if !`, which "
+                       "is the NEGATION's status (0), not apk's")
+    if re.search(r"if\s+!\s*apk\s+add\b", norm):
+        return False, ("its apk invocation is still wrapped in `if !`, so the "
+                       "only status it can read is the negation's")
+    return True, ""
+
+
+def guard_router_dep_stage(bundle_dir):
+    """Fail the build CLOSED unless the shipped router-side DEPENDENCY stage
+    offers the WHOLE staged closure to apk and reports apk's own rc.
+
+    This is a GUARD, not a rewrite: it never modifies install-router.sh, so on
+    success the shipped file is BYTE-IDENTICAL to the pinned source. It returns a
+    one-line note for the installer provenance block, or "" when the bundle
+    carries no router-side installer, or the file is a fixture/synthetic driver
+    rather than the OFFLINE-BUNDLE-2 router half (no fingerprint) — those are
+    passed through untouched.
+
+    Stage (2) of install-router.sh hands apk the dependency files BY PATH, and
+    apk-tools 3 resolves a transaction from the files NAMED on the command line
+    plus the installed DB, and from nothing else. With --no-network a WAN-less
+    box has no index to fall back on, so every dependency of a named package that
+    is not itself named is `(no such package)` and apk refuses the WHOLE
+    transaction. The bundle's closure is complete (the builder resolved and
+    staged all of it, and gate `bundle_closure` asserts the required deps are
+    present); a stage that names only REQUIRED_DEPS + STUB_OK_DEPS simply never
+    offered the rest of it, and on a fresh box that is
 
         REFUSED(7): the offline dependency install failed.
 
-    The rewrite makes the stage offer the ENTIRE staged closure in one
-    transaction (minus the package under test, which stage (3) installs on its
-    own after the keepalive assertion), and repairs the rc accounting that made
-    that refusal report itself as `failed rc=0`.
-
-    It is idempotent (a stage that already carries the marker is left
-    byte-for-byte) and it fails the build CLOSED when a real router-side installer
-    is not the shape this rewrite can guarantee — shipping an unrepaired bundle
-    would put the fresh-box refusal back on the operator's bench.
+    (An UPGRADE box already has nodogsplash's deps installed, so the transaction
+    resolves from the DB and such a stage looks correct — which is why a fresh
+    flash was the first box to refuse.) Upstream PR #178 fixed this at the
+    source, so the guard passes on the current pin; it fails the build closed on
+    any real installer whose stage is not the shape it can guarantee, and it is
+    blind to comments, whitespace and rewording.
     """
     path = os.path.join(bundle_dir, ROUTER_INSTALLER_NAME)
     if not os.path.isfile(path):
         return ""
+    before = sha256_file(path)
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
-    if DEP_CLOSURE_MARK in text:
-        log("router-side dependency stage already offers the full staged closure "
-            "(%s left unchanged)" % ROUTER_INSTALLER_NAME)
-        return ("router: dependency stage offers the full staged closure "
-                "(already repaired), sha256 %s" % sha256_file(path))
     if not all(frag in text for frag in ROUTER_INSTALLER_FINGERPRINT):
         log("%s is not the OFFLINE-BUNDLE-2 router-side installer (no %s); "
-            "nothing to repair"
+            "nothing to guard"
             % (ROUTER_INSTALLER_NAME, ROUTER_INSTALLER_FINGERPRINT[0]))
         return ""
+
+    region = dep_stage_region(text)
+    if region is None:
+        raise Fail(
+            "the pinned router-side installer %s carries the OFFLINE-BUNDLE-2 "
+            "fingerprint but has no stage (2) dependency-install region to "
+            "guard (looked for a line announcing `(2) dependency packages` and "
+            "that stage's `gate_pass deps_installed` line, and found neither). "
+            "Refusing to ship a bundle whose dependency stage cannot be shown "
+            "to offer apk the whole staged closure: with --no-network apk "
+            "resolves a transaction from the files NAMED on the command line "
+            "only, so a dep that is not named is `(no such package)` and a "
+            "WAN-less fresh box refuses with REFUSED(7). Reconcile %s with this "
+            "builder's guard (guard_router_dep_stage) and re-pin "
+            "OFFLINE_INSTALLER_REF."
+            % (ROUTER_INSTALLER_NAME, ROUTER_INSTALLER_NAME))
+
+    ok, why = _dep_stage_offers_closure(_normalise_sh(region))
+    if not ok:
+        raise Fail(
+            "the pinned router-side installer %s has a stage (2) dependency "
+            "install that does NOT offer the whole staged closure to apk: %s. "
+            "Expected the stage to build its package list from the WHOLE staged "
+            "set (`for ... in $STAGED_APKS`, excluding the package under test, "
+            "which stage (3) installs on its own) and to report apk's OWN rc "
+            "(captured from the apk add command, not `$?` inside `if !`). This "
+            "builder no longer rewrites the stage — the upstream installer must "
+            "carry the fix. Refusing to ship a bundle that refuses on a fresh "
+            "box; reconcile %s with the shipped guard and re-pin "
+            "OFFLINE_INSTALLER_REF."
+            % (ROUTER_INSTALLER_NAME, why, ROUTER_INSTALLER_NAME))
+
+    after = sha256_file(path)
+    if after != before:
+        raise Fail("the dep-stage guard modified %s (it must never write to the "
+                   "installer)" % ROUTER_INSTALLER_NAME)
 
     pkgs = os.path.join(bundle_dir, "pkgs")
     staged = 0
     if os.path.isdir(pkgs):
         staged = len([n for n in os.listdir(pkgs) if n.endswith(".apk")])
-
-    rewritten = text
-    applied = []
-    for anchor, replacement, label in DEP_STAGE_REWRITES:
-        hits = rewritten.count(anchor)
-        if hits != 1:
-            raise Fail(
-                "the pinned installer's %s is not the shape this builder can "
-                "make fresh-box installable (%d exact match(es) for it in %s). "
-                "Refusing to ship a bundle whose router-side dependency stage "
-                "may hand apk only the top-level deps: with --no-network apk "
-                "resolves a transaction from the files NAMED on the command "
-                "line only, so every dep that is not named is `(no such "
-                "package)` and a WAN-less fresh box refuses with REFUSED(7). "
-                "Reconcile %s with this builder's rewrite (DEP_STAGE_REWRITES) "
-                "and re-pin OFFLINE_INSTALLER_REF."
-                % (label, hits, ROUTER_INSTALLER_NAME, ROUTER_INSTALLER_NAME))
-        rewritten = rewritten.replace(anchor, replacement)
-        applied.append(label)
-    if DEP_CLOSURE_MARK not in rewritten:
-        raise Fail("the dependency-stage rewrite did not apply to %s"
-                   % ROUTER_INSTALLER_NAME)
-
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(rewritten)
-    os.chmod(path, 0o755)
-    log("router-side dependency stage: %s rewritten (%s) — the full staged "
-        "closure is now offered to apk in one --no-network transaction"
-        % (ROUTER_INSTALLER_NAME, "; ".join(applied)))
+    log("router-side dependency stage: %s offers the full staged closure to apk "
+        "in one --no-network transaction and reports apk's own rc; shipped "
+        "byte-identical to the pin (sha256 %s)"
+        % (ROUTER_INSTALLER_NAME, after))
     return ("router: dependency stage offers the FULL staged closure to apk "
             "(%d staged package(s) minus the package under test), rc captured "
-            "from apk itself; %s sha256 %s"
-            % (staged, ROUTER_INSTALLER_NAME, sha256_file(path)))
+            "from apk itself; %s shipped byte-identical to the pin, sha256 %s"
+            % (staged, ROUTER_INSTALLER_NAME, after))
 
 
 def cmd_assemble(args):
@@ -1354,7 +1393,7 @@ def cmd_assemble(args):
                 os.chmod(dest, os.stat(src).st_mode & 0o777)
                 installer_files.append(rel)
         seed_note = repair_keepalive_seed(bundle_dir)
-        dep_note = repair_router_dep_stage(bundle_dir)
+        dep_note = guard_router_dep_stage(bundle_dir)
         installer_note = ("installer (pinned, from OFFLINE-BUNDLE-2 / "
                           "OpenTollGate/physical-router-test-automation "
                           "scripts/offline/): %d file(s), install-offline.sh "
