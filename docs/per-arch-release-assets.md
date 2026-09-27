@@ -46,9 +46,17 @@ The **Cudy WR3000 v1** (`cudy,wr3000-v1`) is a supported `aarch64_cortex-a53` /
 existing `aarch64_cortex-a53` offline bundle. Its OpenWrt device profile in
 `profiles.json` is `cudy_wr3000-v1`.
 
+The **COMFAST CF-WR632AX** (`comfast,cf-wr632ax`) is likewise a supported
+`aarch64_cortex-a53` / `mediatek-filogic` device — a WiFi-6 compact travel
+router in the MediaTek MT7981 class. It reports an arch tuple and target that
+this feed's matrices **already** cover, so no matrix entry was added for it
+(same as the Cudy above). Its OpenWrt device profile in `profiles.json` is
+`comfast_cf-wr632ax`.
+
 | device profile     | device                       | arch tuple           | target             | flash         |
 |--------------------|------------------------------|----------------------|--------------------|---------------|
 | `cudy_wr3000-v1`   | Cudy WR3000 v1               | `aarch64_cortex-a53` | `mediatek-filogic` | 16 MB SPI-NOR |
+| `comfast_cf-wr632ax` | COMFAST CF-WR632AX         | `aarch64_cortex-a53` | `mediatek-filogic` | 128 MiB SPI NAND |
 | `glinet_gl-mt3000` | GL-MT3000 (MT3000-class bench)| `aarch64_cortex-a53` | `mediatek-filogic` | —             |
 
 ### Capacity caveat — Cudy WR3000 v1 (and the compressed variant that fits)
@@ -73,6 +81,33 @@ helper — a **persistent** install on 16 MB. Two notes from that run: the
 `nodogsplash` closure, and the closure must be installed in **one** `apk add`
 transaction because `apk add --force-non-repository <file>` performs a world
 sync that removes packages previously installed from files.
+
+### COMFAST CF-WR632AX — 128 MiB NAND, so no capacity caveat
+
+The COMFAST CF-WR632AX carries **128 MiB of SPI NAND** flash, so the Cudy
+capacity caveat above — which is specific to that router's 16 MB of SPI-NOR —
+**does not apply here**. Both the default `tollgate-wrt` payload (~21 MB
+uncompressed at the time of writing) and the dependency closure fit with room
+to spare, and the device is not limited to a volatile (tmpfs) install or to the
+compressed `upx-ultra-brute` variant. No measured flash numbers are quoted for
+this device (see the honesty note below).
+
+At the arch/target level the device needs **no new release-matrix entry**: it is
+`aarch64_cortex-a53` / `mediatek-filogic`, already a row in every matrix
+(`release-assets.py` `RELEASES`, the test-build and release-publish workflow
+overrides), so the existing per-arch artifact is already produced for it.
+
+Upstream OpenWrt **officially supports this device since 25.12.0**, and upstream
+requires **25.12.5 or newer** when using the OpenWrt U-Boot layout, because a
+memory-speed stability issue was fixed in 25.12.5 (upstream PRs #22929 /
+#23416).
+
+> **Honesty note.** This device has **not** been exercised on hardware. It is
+> documented as supported on the strength of upstream OpenWrt support and the
+> shared `aarch64_cortex-a53` / `mediatek-filogic` target+arch that this feed
+> already builds; no test install or measured throughput has been performed. A
+> tester with the device is being lined up, and this section will be updated
+> with real numbers once that has happened.
 
 ### Compressed variants are built, but this feed does not publish them
 
