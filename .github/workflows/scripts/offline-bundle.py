@@ -59,8 +59,10 @@ copy (idempotent, required before the bundle may be published) and GUARDS one
 further invariant WITHOUT ever editing the file:
 
   repair_keepalive_seed    the management keepalive seed must be able to create
-                           the anonymous nodogsplash section it writes to (a
-                           fresh flash has no /etc/config/nodogsplash yet)
+                           the /etc/config/nodogsplash FILE *and* the anonymous
+                           nodogsplash section it writes to (a fresh flash has
+                           neither yet, and real `uci add` cannot create a
+                           section in a config file that does not exist)
 
   guard_router_dep_stage   stage (2) of install-router.sh must offer the WHOLE
                            staged closure to apk in one --no-network transaction
@@ -143,27 +145,53 @@ INSTALLER_NAME = "install-offline.sh"
 # (real `uci` exits non-zero; the seed ignores errors and still exits 0) and the
 # installer's own keepalive_applied gate then refuses with exit 5 — a bundle
 # refused by the gate for a package the bundle itself delivers. The builder
-# therefore guarantees the shipped seed can create the section it needs.
+# therefore guarantees the shipped seed can create the config FILE and the
+# section it needs.
 KEEPALIVE_REL = "templates/99z-mgmt-keepalive"
 
-# Marker: this substring in a seed already means "create the section when it is
-# absent", so the repair below is idempotent.
-KEEPALIVE_FRESHBOX_MARK = \
+# TWO independent markers, so the repair never double-applies either step and
+# never rewrites a seed that already carries it (the class of bug the
+# dependency-stage fix removed from this builder):
+#   * the FILE-ensure step (create /etc/config/nodogsplash when it is absent);
+#   * the SECTION-ensure step (create the anonymous nodogsplash section).
+# The file marker is a regex, not a literal, so an upstream reword (a variable
+# holding the path, single vs double quotes, extra spaces) still counts.
+KEEPALIVE_FILE_ENSURE_RE = re.compile(
+    r'^\s*\[[^\]]*etc/config/nodogsplash"[^\]]*\]\s*\|\|\s*:\s*>\s*'
+    r'\S*etc/config/nodogsplash"',
+    re.M)
+KEEPALIVE_SECTION_MARK = \
     "uci -q get nodogsplash.@nodogsplash[0] >/dev/null 2>&1"
 
-KEEPALIVE_FRESHBOX_GUARD = """\
+KEEPALIVE_FRESHBOX_HEADER = """\
 # --- fresh-box guard (added by the offline bundle builder) -------------------
-# A freshly flashed box has NO /etc/config/nodogsplash yet, so the anonymous
-# section @nodogsplash[0] cannot be resolved here and the add_list calls below
-# would land nothing (this script ignores errors and still exits 0).
-# install-router.sh asserts this pre-auth trust is LIVE *before* it installs
-# anything and otherwise refuses with exit 5, so the seed itself has to be able
-# to create the section it needs — otherwise the bundle's own safety gate
-# refuses a first flash for a package the bundle is carrying.
+# A freshly flashed box has NO /etc/config/nodogsplash yet: nodogsplash is one of
+# the packages the bundle itself DELIVERS, so it is not installed when this seed
+# runs. Real `uci` needs the config FILE to exist before `uci add <cfg> <type>`
+# will create a section (it prints "uci: Entry not found" and exits 3 — measured
+# on the bench MT3000, 2026-09-28), and it cannot resolve the anonymous section
+# @nodogsplash[0] without that file either — so the add_list calls below would
+# land nothing (this script ignores errors and still exits 0). install-router.sh
+# asserts this pre-auth trust is LIVE *before* it installs anything and otherwise
+# refuses with exit 5, so the seed itself has to create the file AND the section
+# it needs.
+"""
+
+KEEPALIVE_FILE_ENSURE = """\
+# Test seam (never set on a router): a harness root standing in for the router's
+# filesystem, exactly as install-router.sh uses it. Empty ⇒ real /etc/config/….
+[ -f "${TGOFFLINE_ROOT:-}/etc/config/nodogsplash" ] || : > "${TGOFFLINE_ROOT:-}/etc/config/nodogsplash"
+"""
+
+KEEPALIVE_SECTION_ENSURE = """\
 if ! uci -q get nodogsplash.@nodogsplash[0] >/dev/null 2>&1; then
     uci add nodogsplash nodogsplash
 fi
 """
+
+# What a seed that carries NEITHER step gets: both, file first.
+KEEPALIVE_FRESHBOX_GUARD = (
+    KEEPALIVE_FRESHBOX_HEADER + KEEPALIVE_FILE_ENSURE + KEEPALIVE_SECTION_ENSURE)
 
 # --- the router-side DEPENDENCY stage (stage 2 of install-router.sh) ---------
 # The companion script hands apk the dependency files BY PATH. apk-tools 3
@@ -1118,20 +1146,32 @@ def repair_keepalive_seed(bundle_dir):
     2026-09-27 wave 3); an UPGRADE passes, which is why only the fresh flash saw
     it.
 
-    The repair inserts the section-ensure guard immediately before the seed's
-    first nodogsplash `uci` call, so the seed creates the section it needs. It is
-    idempotent: a seed that already carries the guard is left byte-for-byte.
+    Creating the SECTION is not enough on its own: real `uci` also needs the
+    config FILE to exist before `uci add <cfg> <type>` will create a section
+    there (bench MT3000, fresh flash, 2026-09-28 — `uci add nodogsplash
+    nodogsplash` exited 3 with "uci: Entry not found"; with the file created
+    first the very same call exited 0). So the repair guarantees BOTH steps, in
+    this order, immediately before the seed's first nodogsplash `uci` call:
+    create the (empty) config file when it is absent — never clobbering an
+    existing one — and then create the anonymous section when it is absent.
+
+    It is idempotent PER STEP: whichever steps the seed already carries are left
+    byte-for-byte, and a seed that carries both is returned untouched (no
+    rewrite, no re-application), so a moving pin can adopt upstream's own fix
+    without this builder fighting it.
     """
     path = os.path.join(bundle_dir, KEEPALIVE_REL)
     if not os.path.isfile(path):
         return ""
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
-    if KEEPALIVE_FRESHBOX_MARK in text:
-        log("keepalive seed already creates the anonymous nodogsplash section "
-            "(fresh-box safe): %s left unchanged" % KEEPALIVE_REL)
-        return ("seed: fresh-box safe (carries the section guard), sha256 %s"
-                % sha256_file(path))
+    has_file = bool(KEEPALIVE_FILE_ENSURE_RE.search(text))
+    has_section = KEEPALIVE_SECTION_MARK in text
+    if has_file and has_section:
+        log("keepalive seed already creates the nodogsplash config file and the "
+            "anonymous section (fresh-box safe): %s left unchanged" % KEEPALIVE_REL)
+        return ("seed: fresh-box safe (carries the file-ensure + section guard), "
+                "sha256 %s" % sha256_file(path))
     lines = text.splitlines(keepends=True)
     idx = None
     for i, line in enumerate(lines):
@@ -1145,16 +1185,23 @@ def repair_keepalive_seed(bundle_dir):
             "'allow tcp port 22') the router-side installer asserts before it "
             "installs anything — it is not a keepalive seed. Refusing to ship "
             "it." % KEEPALIVE_REL)
-    lines[idx:idx] = [KEEPALIVE_FRESHBOX_GUARD]
+    insert = [KEEPALIVE_FRESHBOX_HEADER]
+    if not has_file:
+        insert.append(KEEPALIVE_FILE_ENSURE)
+    if not has_section:
+        insert.append(KEEPALIVE_SECTION_ENSURE)
+    lines[idx:idx] = insert
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("".join(lines))
     os.chmod(path, 0o755)
-    log("keepalive seed: inserted the fresh-box section guard before line %d "
-        "of %s — a box with no /etc/config/nodogsplash can now establish the "
-        "pre-auth trust the router-side installer asserts"
-        % (idx + 1, KEEPALIVE_REL))
-    return ("seed: fresh-box guard inserted (creates the anonymous nodogsplash "
-            "section when absent), sha256 %s" % sha256_file(path))
+    missing = "+".join(n for n, ok in (("file-ensure", has_file),
+                                       ("section", has_section)) if not ok)
+    log("keepalive seed: inserted the fresh-box guard (%s) before line %d of %s — "
+        "a box with no /etc/config/nodogsplash can now establish the pre-auth "
+        "trust the router-side installer asserts"
+        % (missing, idx + 1, KEEPALIVE_REL))
+    return ("seed: fresh-box guard inserted (%s), sha256 %s"
+            % (missing, sha256_file(path)))
 
 
 def _normalise_sh(text):
