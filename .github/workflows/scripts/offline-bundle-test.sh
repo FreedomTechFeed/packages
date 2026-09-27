@@ -17,6 +17,14 @@
 #   C. the release ORDERING: the workflow must build the offline bundle BEFORE
 #      it signs SHA256SUMS, and the bundle's asset name must be in the expected
 #      asset set (otherwise the signed manifest does not cover it).
+#   D. the FRESH-BOX keepalive: a freshly flashed box has no
+#      /etc/config/nodogsplash, so a seed that resolves @nodogsplash[0] without
+#      first creating it lands NOTHING and install-router.sh's keepalive_applied
+#      gate then REFUSES with exit 5 (observed on the bench MT3000, 2026-09-27
+#      wave 3; an UPGRADE passes). These checks reproduce that on a simulated box
+#      (`uci` is a PATH double) and pin the builder to shipping a seed that can
+#      establish the trust the installer asserts — while the trust check itself
+#      stays strict (a seed without 'allow tcp port 22' must still not pass).
 #
 # Group C is checked against a MUTATED copy of the real workflow as a negative
 # control, so the assertion cannot pass vacuously:
@@ -24,26 +32,49 @@
 #   `order_ok` on the mutated workflow   -> must FAIL
 #
 # Run locally:  bash .github/workflows/scripts/offline-bundle-test.sh
-# Offline: groups A, B and C are hermetic (no network, no apk needed).
+# Offline: groups A, B, C and D are hermetic (no network, no apk, no router).
 #
 # ---------------------------------------------------------------------------
-# Evidence — both runs executed 2026-09-25 on this branch. The RED run points
-# the suite at a copy of the builder with four guards removed (an unresolved
-# dependency no longer fails the plan, a bundle may be assembled without
-# install-offline.sh, MANIFEST.sha256 stops covering pkgs/, and a member whose
-# bytes changed after fetching is no longer refused):
+# Evidence — both runs executed 2026-09-27 on the offline-bundle worktree.
+# The RED run points the suite at a copy of the builder with the fresh-box seed
+# repair removed (the seed the pinned installer repo ships is passed through
+# unchanged), which is the negative control for group D.
 #
-# RED   $ OFFLINE_BUNDLE_TEST_SUBJECT=<guard-less copy> bash offline-bundle-test.sh
-#   FAIL missing-dependency fails closed and names it
-#   FAIL runtime-dep-absent: a missing RUNTIME dependency is never stubbed
-#   FAIL a constrained stale virtual dep is refused (a stub cannot satisfy it)
-#   FAIL manifest does not cover the tollgate-wrt package
-#   FAIL tampered byte fails the manifest check
-#   FAIL a member whose bytes changed after fetching is refused
-#   24 passed, 6 failed        <- rc=1
+# RED   # derive the fresh-box-unsafe copy: the repair call removed, nothing else
+#       $ python3 - <<'PY'
+#       s = open('.github/workflows/scripts/offline-bundle.py').read()
+#       s = s.replace('        seed_note = repair_keepalive_seed(bundle_dir)',
+#                     '        seed_note = ""  # fresh-box repair removed')
+#       open('/tmp/offline-bundle-freshbox-unsafe.py', 'w').write(s)
+#       PY
+#       $ OFFLINE_BUNDLE_TEST_SUBJECT=/tmp/offline-bundle-freshbox-unsafe.py \
+#             bash .github/workflows/scripts/offline-bundle-test.sh
+#   FAIL fresh-box: the bundle's seed does not create the anonymous nodogsplash section
+#   FAIL fresh-box: the as-shipped seed was shipped unchanged (no repair ran)
+#   FAIL fresh-box: the bundle's seed still does not establish live trust on a fresh box
+#   FAIL fresh-box: re-applying the seed duplicated the trust entries
+#   FAIL fresh-box: a seed that never touches nodogsplash is refused
+#   39 passed, 5 failed        <- rc=1
 #
 # GREEN $ bash .github/workflows/scripts/offline-bundle-test.sh
-#   30 passed, 0 failed        <- rc=0
+#   44 passed, 0 failed        <- rc=0
+#
+# ---------------------------------------------------------------------------
+# Evidence — historical: the 2026-09-25 RED run for the ORIGINAL groups A/B/C
+# pointed the suite at a copy of the builder with four guards removed (an
+# unresolved dependency no longer failed the plan, a bundle could be assembled
+# without install-offline.sh, MANIFEST.sha256 stopped covering pkgs/, and a
+# member whose bytes changed after fetching was no longer refused):
+#
+# RED   FAIL missing-dependency fails closed and names it
+#       FAIL runtime-dep-absent: a missing RUNTIME dependency is never stubbed
+#       FAIL a constrained stale virtual dep is refused (a stub cannot satisfy it)
+#       FAIL manifest does not cover the tollgate-wrt package
+#       FAIL tampered byte fails the manifest check
+#       FAIL a member whose bytes changed after fetching is refused
+#       24 passed, 6 failed        <- rc=1
+#
+# GREEN   30 passed, 0 failed        <- rc=0
 #
 # The ordering assertions (group C) also ran RED before release-publish.yml was
 # wired: "release workflow does not build the offline bundle before signing
@@ -71,6 +102,31 @@ trap 'rm -rf "$WORK"' EXIT
 
 pass() { echo "ok   $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL $1"; FAIL=$((FAIL + 1)); }
+
+# The management keepalive seed EXACTLY as it ships from the pinned installer repo
+# (OpenTollGate/physical-router-test-automation scripts/offline/templates), with
+# the workstation MAC substituted — this is the file that REFUSED a fresh flash.
+write_unsafe_keepalive() { # write_unsafe_keepalive <path>
+  cat > "$1" <<'SEED'
+#!/bin/sh
+# 99z — management keepalive (seeded BEFORE anything can start enforcement).
+TRUST_MAC="8c:16:45:0d:6f:c5"
+
+TM=$(uci -q get nodogsplash.@nodogsplash[0].trustedmac 2>/dev/null || echo "")
+if ! echo "$TM" | grep -q "$TRUST_MAC"; then
+    uci add_list nodogsplash.@nodogsplash[0].trustedmac="$TRUST_MAC"
+fi
+
+UTR=$(uci -q get nodogsplash.@nodogsplash[0].users_to_router 2>/dev/null || echo "")
+if ! echo "$UTR" | grep -q "port 22"; then
+    uci add_list nodogsplash.@nodogsplash[0].users_to_router='allow tcp port 22'
+fi
+
+uci commit nodogsplash
+exit 0
+SEED
+  chmod +x "$1"
+}
 
 # --------------------------------------------------------------- A: fixtures
 # A deliberately small index: two feeds, a `provides` indirection, a version
@@ -356,7 +412,9 @@ fi
 mkdir -p "$WORK/installer-src/templates"
 printf '#!/bin/sh\necho driver\n' > "$WORK/installer-src/install-offline.sh"
 printf '#!/bin/sh\necho router side\n' > "$WORK/installer-src/install-router.sh"
-printf 'trustedmac + allow tcp port 22\n' > "$WORK/installer-src/templates/99z-mgmt-keepalive"
+# The seed as it ships from the pinned installer repo: it resolves the anonymous
+# nodogsplash section without first ensuring it exists (group D pins the repair).
+write_unsafe_keepalive "$WORK/installer-src/templates/99z-mgmt-keepalive"
 chmod +x "$WORK/installer-src/install-offline.sh" "$WORK/installer-src/install-router.sh"
 if assemble "$WORK/out-dir" --installer-dir "$WORK/installer-src"; then
   BUNDLE_DIR_CASE="$WORK/out-dir/tollgate-wrt-${VERSION}-${ARCH}-offline"
@@ -550,6 +608,181 @@ if printf '%s\n' "$EXPECTED_BODY" | grep -qE 'release-assets\.py "\$EXPECT_ARGS"
   pass "the heredoc emits the chosen expected set in a single call"
 else
   fail "the heredoc does not emit the chosen expected set in a single call"
+fi
+
+# ------------------------------------------------- D: the FRESH-BOX keepalive
+# Hardware observation (bench MT3000, OpenWrt 25.12.5, FRESH flash, 2026-09-27
+# wave 3): the released bundle REFUSED with exit 5 BEFORE it installed anything,
+# because a freshly flashed box has no /etc/config/nodogsplash. The seed's
+#   uci add_list nodogsplash.@nodogsplash[0].trustedmac=...
+# cannot resolve an anonymous section that does not exist, so it lands nothing —
+# the seed ignores errors and still exits 0 — and install-router.sh's
+# keepalive_applied gate then finds no trust and refuses. That is the
+# chicken-and-egg: the installer's own pre-install safety gate depends on a
+# package the bundle itself delivers. An UPGRADE passed (the config already
+# existed), which is why waves 1 and 2 were green and wave 3 was not.
+#
+# `uci` is a PATH double here that models exactly the one behaviour that matters:
+# an anonymous-section path cannot be resolved, and add_list cannot land, until
+# the section exists.
+FB_SH="sh"
+if command -v busybox >/dev/null 2>&1 && busybox ash -c 'true' >/dev/null 2>&1; then
+  FB_SH="busybox ash"
+elif command -v dash >/dev/null 2>&1; then
+  FB_SH="dash"
+fi
+
+UCI_DOUBLE="$WORK/uci-double/bin/uci"
+mkdir -p "$(dirname "$UCI_DOUBLE")"
+cat > "$UCI_DOUBLE" <<'UCI'
+#!/bin/sh
+# minimal `uci` double. The router is a state directory ($UCI_STATE); the only
+# behaviour modelled is real uci's: nodogsplash.@nodogsplash[0] does not resolve,
+# and add_list exits non-zero, until the section exists.
+S="$UCI_STATE"
+[ "$1" = "-q" ] && shift
+cmd="$1"; shift 2>/dev/null || true
+case "$cmd" in
+  get)
+    [ -f "$S/section" ] || exit 1
+    case "$1" in
+      'nodogsplash.@nodogsplash[0]') exit 0 ;;
+      *trustedmac) cat "$S/trustedmac" 2>/dev/null; [ -s "$S/trustedmac" ] || exit 1 ;;
+      *users_to_router) cat "$S/users_to_router" 2>/dev/null; [ -s "$S/users_to_router" ] || exit 1 ;;
+      *) exit 1 ;;
+    esac ;;
+  add)
+    [ "${1:-}" = "nodogsplash" ] || exit 1
+    : > "$S/section"; exit 0 ;;
+  add_list)
+    [ -f "$S/section" ] || exit 1          # real uci: entry not found
+    key="$1"; val="${key#*=}"
+    case "$key" in
+      *trustedmac*) printf '%s\n' "$val" >> "$S/trustedmac" ;;
+      *users_to_router*) printf '%s\n' "$val" >> "$S/users_to_router" ;;
+      *) exit 1 ;;
+    esac ;;
+  *) exit 0 ;;
+esac
+UCI
+chmod +x "$UCI_DOUBLE"
+PATH="$(dirname "$UCI_DOUBLE"):$PATH"
+export PATH
+
+FB_MAC="8c:16:45:0d:6f:c5"
+# mirrors install-router.sh assert_keepalive_live(): the trust is "live" only
+# when BOTH the MAC is in trustedmac AND 'port 22' is in users_to_router.
+fb_trust_live() { # fb_trust_live <state-dir>
+  local tm utr
+  tm=$(UCI_STATE="$1" "$UCI_DOUBLE" -q get nodogsplash.@nodogsplash[0].trustedmac 2>/dev/null || echo "")
+  utr=$(UCI_STATE="$1" "$UCI_DOUBLE" -q get nodogsplash.@nodogsplash[0].users_to_router 2>/dev/null || echo "")
+  echo "$tm" | grep -q "$FB_MAC" || return 1
+  echo "$utr" | grep -q 'port 22' || return 1
+  return 0
+}
+
+# D1: the as-shipped seed lands NOTHING on a fresh box. This reproduces the bug
+#     through the seed's own logic (and proves the fixture really is the bug —
+#     if this passed, D2/D3 would be vacuous).
+ST_OLD="$WORK/freshbox-state-old"; mkdir -p "$ST_OLD"
+# shellcheck disable=SC2086
+UCI_STATE="$ST_OLD" $FB_SH "$WORK/installer-src/templates/99z-mgmt-keepalive" >/dev/null 2>&1
+if fb_trust_live "$ST_OLD"; then
+  fail "fresh-box: the as-shipped seed established trust (the fixture is not the wave-3 bug)"
+else
+  pass "fresh-box: the as-shipped seed lands NOTHING with no /etc/config/nodogsplash — the wave-3 refusal"
+fi
+
+# D2: the builder repairs the seed, so the BUNDLE's seed creates the section.
+mkdir -p "$WORK/freshbox-src/templates"
+printf '#!/bin/sh\necho driver\n' > "$WORK/freshbox-src/install-offline.sh"
+printf '#!/bin/sh\necho router side\n' > "$WORK/freshbox-src/install-router.sh"
+write_unsafe_keepalive "$WORK/freshbox-src/templates/99z-mgmt-keepalive"
+cp "$WORK/freshbox-src/templates/99z-mgmt-keepalive" "$WORK/freshbox-seed-input"
+chmod +x "$WORK/freshbox-src/install-offline.sh" "$WORK/freshbox-src/install-router.sh"
+FB_BUNDLE=""
+if assemble "$WORK/out-fresh" --installer-dir "$WORK/freshbox-src"; then
+  FB_BUNDLE="$WORK/out-fresh/tollgate-wrt-${VERSION}-${ARCH}-offline"
+  FB_SEED="$FB_BUNDLE/templates/99z-mgmt-keepalive"
+  if grep -q 'uci add nodogsplash nodogsplash' "$FB_SEED"; then
+    pass "fresh-box: the bundle's seed creates the anonymous nodogsplash section when it is absent"
+  else
+    fail "fresh-box: the bundle's seed does not create the anonymous nodogsplash section"
+  fi
+  if cmp -s "$WORK/freshbox-seed-input" "$FB_SEED"; then
+    fail "fresh-box: the as-shipped seed was shipped unchanged (no repair ran)"
+  else
+    pass "fresh-box: the builder changed the seed (fresh-box repair applied)"
+  fi
+  # The repair must not damage the contract install-router.sh asserts on the seed.
+  if grep -q 'trustedmac' "$FB_SEED" && grep -q 'port 22' "$FB_SEED" \
+     && grep -q "$FB_MAC" "$FB_SEED" && ! grep -q '__TRUST_MAC__' "$FB_SEED"; then
+    pass "fresh-box: the repaired seed still carries trustedmac + 'allow tcp port 22' + the MAC"
+  else
+    fail "fresh-box: the repaired seed lost a fragment install-router.sh asserts"
+  fi
+  if (cd "$FB_BUNDLE" && sha256sum --check --strict MANIFEST.sha256 >/dev/null 2>&1); then
+    pass "fresh-box: the repaired seed is covered by MANIFEST.sha256"
+  else
+    fail "fresh-box: the repaired seed broke the bundle manifest"
+  fi
+  # D3: applying the BUNDLE's seed on a fresh box establishes live trust, so
+  #     keepalive_applied passes and the install proceeds.
+  ST_NEW="$WORK/freshbox-state-new"; mkdir -p "$ST_NEW"
+  # shellcheck disable=SC2086
+  UCI_STATE="$ST_NEW" $FB_SH "$FB_SEED" >/dev/null 2>&1
+  if fb_trust_live "$ST_NEW"; then
+    pass "fresh-box: the bundle's seed establishes live trust, so keepalive_applied passes"
+  else
+    fail "fresh-box: the bundle's seed still does not establish live trust on a fresh box"
+  fi
+  # D4: idempotent — the seed re-applies at every boot (uci-defaults), so a second
+  #     run must not duplicate the entries.
+  # shellcheck disable=SC2086
+  UCI_STATE="$ST_NEW" $FB_SH "$FB_SEED" >/dev/null 2>&1
+  if [ "$(UCI_STATE="$ST_NEW" "$UCI_DOUBLE" -q get nodogsplash.@nodogsplash[0].trustedmac | wc -l)" = "1" ]; then
+    pass "fresh-box: re-applying the seed does not duplicate the trust entries"
+  else
+    fail "fresh-box: re-applying the seed duplicated the trust entries"
+  fi
+else
+  fail "fresh-box: --installer-dir assembly with the as-shipped seed failed: $(tail -n2 "$WORK/assemble.log")"
+fi
+
+# D5 (control): the trust check must still FAIL for a fresh-box-safe seed that
+#     omits the SSH pre-auth rule — otherwise D3 is vacuous and the fix would
+#     have weakened the Aug 16/17 fail-safe.
+cat > "$WORK/freshbox-nossh.sh" <<'SEED'
+#!/bin/sh
+if ! uci -q get nodogsplash.@nodogsplash[0] >/dev/null 2>&1; then
+    uci add nodogsplash nodogsplash
+fi
+uci add_list nodogsplash.@nodogsplash[0].trustedmac="8c:16:45:0d:6f:c5"
+uci commit nodogsplash
+exit 0
+SEED
+ST_NS="$WORK/freshbox-state-nossh"; mkdir -p "$ST_NS"
+# shellcheck disable=SC2086
+UCI_STATE="$ST_NS" $FB_SH "$WORK/freshbox-nossh.sh" >/dev/null 2>&1
+if fb_trust_live "$ST_NS"; then
+  fail "fresh-box control: the trust check passes with no 'allow tcp port 22' (it is vacuous)"
+else
+  pass "fresh-box control: the trust check still fails with no SSH pre-auth rule (fail-safe intact)"
+fi
+
+# D6: a "seed" that never touches nodogsplash cannot establish the trust the
+#     installer asserts, so the builder refuses to ship it, naming the file.
+mkdir -p "$WORK/freshbox-bad/templates"
+printf '#!/bin/sh\necho not a keepalive\n' > "$WORK/freshbox-bad/templates/99z-mgmt-keepalive"
+printf '#!/bin/sh\necho driver\n' > "$WORK/freshbox-bad/install-offline.sh"
+if assemble "$WORK/out-fresh-bad" --installer-dir "$WORK/freshbox-bad"; then
+  fail "fresh-box: a seed that never touches nodogsplash is refused"
+else
+  if grep -q '99z-mgmt-keepalive' "$WORK/assemble.log"; then
+    pass "fresh-box: a seed that never touches nodogsplash is refused, naming the seed"
+  else
+    fail "fresh-box: the refusal did not name the seed: $(tail -n1 "$WORK/assemble.log")"
+  fi
 fi
 
 # ------------------------------------------------------------------ summary
