@@ -208,20 +208,33 @@ PKG_NAME:=tollgate-wrt
 # a known divergence so nobody "fixes" the lock back: for this pre-release the
 # club artifact deliberately carries BOTH halves of the admin-credential fix.
 #
-# Read `_pre16`/`_pre17`/`_pre18` honestly: like pre15, the pin sits AFTER the
-# v0.6.0-alpha4 tag, so this is a post-tag MAIN-TIP build of the alpha4 line,
-# not a build that precedes the tag. The ordering the scheme needs still holds,
-# and is why the base moved at pre15 (the feed's tag base has always equalled
-# the module VERSION at the pin):
+# pre19 takes the pre19 version string and the PORTAL RE-VENDOR — nothing else.
+# PKG_VERSION moves to 0.6.0_alpha4_pre19, and vendor.lock.json's portal_commit
+# already points at 4158030, which IS portal main after #62/#64/#65 — #62
+# fail-closed admin credential, #64 coverage-based LuCI redirect, #65 admin
+# board :8443 identity + :8090 redirect; the vendored 92 is re-copied
+# byte-exactly from that same commit on this branch. The module pin
+# PKG_SOURCE_VERSION and PKG_HASH are DELIBERATELY still the pre18 values and
+# will move to the module main tip in a FOLLOW-UP COMMIT on this same branch
+# once the module-side fixes land — so this version string does NOT yet describe
+# new module bytes, exactly as pre17 shipped a bump with every pin unchanged
+# (above). The 'Vendor drift guard' and 'Module tarball parity guard' jobs stay
+# green across the split because each half is compared against its own pin.
+#
+# Read `_pre16`/`_pre17`/`_pre18`/`_pre19` honestly: like pre15, the pin sits
+# AFTER the v0.6.0-alpha4 tag, so this is a post-tag MAIN-TIP build of the alpha4
+# line, not a build that precedes the tag. The ordering the scheme needs still
+# holds, and is why the base moved at pre15 (the feed's tag base has always
+# equalled the module VERSION at the pin):
 #     0.6.0_alpha2_pre13 < 0.6.0_alpha4_pre15 < 0.6.0_alpha4_pre16 < 0.6.0_alpha4_pre17
-#     < 0.6.0_alpha4_pre18 < 0.6.0_alpha4
+#     < 0.6.0_alpha4_pre18 < 0.6.0_alpha4_pre19 < 0.6.0_alpha4
 # checked with the apk-tools 3 oracle (`apk version -c` legality, `apk version -t`
 # ordering) on openwrt/rootfs:x86_64-v25.12.4 — see the PR body for the output.
 # Consequence, stated rather than hidden: a device already running a published
 # `0.6.0_alpha4` build is NOT offered this package (only pre-train devices are),
 # by construction — the version string sorts below the tag even though these
 # bytes are newer than it.
-PKG_VERSION:=0.6.0_alpha4_pre18
+PKG_VERSION:=0.6.0_alpha4_pre19
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
