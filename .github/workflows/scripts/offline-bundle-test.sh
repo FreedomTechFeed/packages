@@ -68,6 +68,22 @@
 #      documented as a pinned interface (a reword fails closed and says so), a
 #      non-UTF-8 installer fails with the re-pin guidance, and the provenance
 #      count is the staged closure MINUS the package under test.
+#   F2. the SECOND cross-family review (2026-09-28), which found the guard still
+#      judged the variable NAME and not what it HOLDS, so five broken-but-accepted
+#      shapes shipped green (f1i-f1l below), and — in the other direction —
+#      ACCEPTED `apk add … || rc=$?` with NO `rc=0` pre-initialisation, a shape
+#      that reports REFUSED(7) on a box where apk SUCCEEDED (f9 below runs it).
+#      The guard now: refuses a (re)assignment of the offered list between the
+#      `$STAGED_APKS` loop and the apk call, refuses a name/pattern filter inside
+#      the loop body (a `case …-*)`, `grep`, `$(basename …)`, `head -n1`, a pipe,
+#      a `break`), refuses the inverted exclusion (`[ … != "$PKG_APK" ] &&
+#      continue`, which keeps ONLY the package under test), refuses
+#      `apk add $STAGED_APKS` itself (the raw list still contains it), and
+#      requires a CONDITIONAL capture to be pre-initialised to 0 (or read as
+#      `${rc:-0}`). It also ACCEPTS the redirection/`case`/`||`-operand-order/
+#      `+=`/`${…}` spellings it used to refuse, and locates the region in the
+#      installer's EXECUTABLE shell, so a decoy stage inside a here-doc body (or a
+#      string that only MENTIONS the banner) is never judged.
 #
 # Group C is checked against a MUTATED copy of the real workflow as a negative
 # control, so the assertion cannot pass vacuously:
@@ -209,6 +225,49 @@
 #    reproduces the wave-3 refusal on a fresh box and PASSES on an upgrade box —
 #    and the fixed-shape installer is still ACCEPTED byte-identically, with the
 #    marker-deleted landmine still accepted, so group F is not vacuous.)
+# ---------------------------------------------------------------------------
+# Evidence — the SECOND cross-family review of the guard (2026-09-28): the guard
+# judged the variable NAME and not what it HOLDS. The RED run points the suite at
+# the PR head as first reviewed; the new group-F2 cases are that review's
+# counterexamples, so a case that fails there is one the guard really got wrong.
+#
+# RED   $ cp .github/workflows/scripts/offline-bundle.py /tmp/offline-bundle-f2red.py
+#       $ OFFLINE_BUNDLE_TEST_SUBJECT=/tmp/offline-bundle-f2red.py \
+#             bash .github/workflows/scripts/offline-bundle-test.sh
+#   FAIL f1j_list_repointed_topdeps: the guard SHIPPED it (the loop builds the
+#         closure, then DEP_FILES="$REQUIRED_DEPS $STUB_OK_DEPS" re-points it)
+#   FAIL f1k_offers_raw_staged_apks: the guard SHIPPED it (`apk add $STAGED_APKS`
+#         — the raw list still contains the package under test)
+#   FAIL f1l_closure_filtered_by_name: the guard SHIPPED it (the wave-3 defect
+#         re-expressed inside the `$STAGED_APKS` loop)
+#   FAIL f1i_inverted_exclusion: the guard SHIPPED it (`!= ` + `continue` keeps
+#         ONLY the package under test)
+#   FAIL f1e_heredoc_doc_ok / f3a_rc_named_rc / f4_newline_do:
+#         the guard ACCEPTED a shape that reports REFUSED(7) on a SUCCESSFUL apk,
+#         which f9 now reproduces as a runtime failure
+#   107 passed, 7 failed       <- rc=1
+#   (the 7 are exactly the reviewer's f1i-f1l and the accepted-no-pre-init cases;
+#    every other case in the suite passes on the pre-fix builder, so the new
+#    group-F2 checks are not passing for an unrelated reason)
+#
+#   $ git show origin/master:.github/workflows/scripts/offline-bundle.py \
+#             > /tmp/offline-bundle-f2master.py
+#   $ OFFLINE_BUNDLE_TEST_SUBJECT=/tmp/offline-bundle-f2master.py \
+#             bash .github/workflows/scripts/offline-bundle-test.sh
+#   76 passed, 27 failed       <- rc=1
+#   (origin/master's builder — the #38 merge, the guard exactly as first
+#    reviewed — fails 27 of the suite's cases, so the suite is not vacuous)
+#
+# GREEN $ bash .github/workflows/scripts/offline-bundle-test.sh
+#   ok   f1j_list_repointed_topdeps: refused, naming RE-ASSIGNED
+#   ok   f1k_offers_raw_staged_apks: refused, naming still contains the package under test
+#   ok   f1l_closure_filtered_by_name: refused, naming filters the staged files
+#   ok   f1i_inverted_exclusion: refused, naming WRONG WAY ROUND
+#   ok   rcshapenopin: a conditional capture with no pre-init reports
+#         deps_installed FAIL on a SUCCESSFUL apk (the false REFUSED(7))
+#   ok   rcshapepin: the same stage WITH the rc=0 pre-init passes the same apk
+#   ok   rcshape: only the pre-init separates a false failure from a healthy box
+#   114 passed, 0 failed       <- rc=0
 # ---------------------------------------------------------------------------
 
 set -uo pipefail
@@ -1166,9 +1225,11 @@ mkdir -p "$E_FIX/templates"
 cat > "$E_FIX/install-router.sh" <<'FIXTURE'
 #!/bin/sh
 # fixture: the router-side installer of OFFLINE-BUNDLE-2 as the FIXED upstream
-# pin ships it (@dc37d1b2, blob sha256 596e77cc…), trimmed to the stages this
-# suite runs. Stage (2) and stage (3) below are byte-for-byte that text,
-# including the whole-closure offer and the apk's-own-rc capture.
+# pin ships it (@dc37d1b2 …), trimmed to the stages this suite runs. Stage (2) and
+# stage (3) below carry the whole-closure offer and the apk's-own-rc capture. The
+# `apk_deps_rc=0` pre-init is part of the real fix: a conditional `|| rc=$?`
+# capture assigns nothing when apk SUCCEEDS, so without it a healthy box reported
+# REFUSED(7) — the guard now requires it (see f9), so this fixture keeps it.
 TGOFFLINE_VERSION="1.0.0"
 REQUIRED_DEPS="nodogsplash jq libmicrohttpd-no-ssl"
 STUB_OK_DEPS="libpthread"
@@ -1698,6 +1759,11 @@ CASE
 guard_case f1c_heredoc_loop refuse 'never iterates $STAGED_APKS' "$F_CASES/f1c_heredoc_loop.stage"
 
 # A here-doc that merely DOCUMENTS the wrong way must not refuse a correct stage.
+# NOTE (review F2): the shape below is NOT correct on its own — `|| rc=$?` with no
+# `rc=0` pre-init reports REFUSED(7) on a SUCCESSFUL apk, so the guard must refuse
+# it (f9 runs the false refusal). The here-doc tolerance it used to prove is
+# still covered, by f1e_rc0 below, which is the same stage with the pre-init the
+# guard requires.
 mkbody f1e_heredoc_doc_ok <<'CASE'
 echo ""
 echo "=== (2) dependency packages ==="
@@ -1713,7 +1779,99 @@ apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
 [ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
 gate_pass deps_installed
 CASE
-guard_case f1e_heredoc_doc_ok accept - "$F_CASES/f1e_heredoc_doc_ok.stage"
+guard_case f1e_heredoc_doc_ok refuse 'not pre-initialised' "$F_CASES/f1e_heredoc_doc_ok.stage"
+
+# ... the same stage WITH the `rc=0` pre-init the guard requires: the here-doc
+# tolerance (and every other property) is still an ACCEPT control.
+mkbody f1e_rc0_heredoc_doc_ok <<'CASE'
+echo ""
+echo "=== (2) dependency packages ==="
+DEP_FILES=""
+for f in $STAGED_APKS; do
+  [ "$f" != "$PKG_APK" ] && DEP_FILES="$DEP_FILES $f"
+done
+# how NOT to do it (documentation only):
+cat <<'DOC' >/dev/null
+apk add --no-network --allow-untrusted $REQUIRED_DEPS || rc=$?
+DOC
+rc=0
+apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
+[ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
+gate_pass deps_installed
+CASE
+guard_case f1e_rc0_heredoc_doc_ok accept - "$F_CASES/f1e_rc0_heredoc_doc_ok.stage"
+
+# --- F2: the shapes the second review found ACCEPTED while they are broken ------
+# The list is built, then RE-POINTED at the top-level deps before the apk call:
+# the loop is dead and apk gets the wave-3 transaction. Must be refused.
+mkbody f1j_list_repointed_topdeps <<'CASE'
+echo ""
+echo "=== (2) dependency packages ==="
+DEP_FILES=""
+for f in $STAGED_APKS; do
+  [ "$f" != "$PKG_APK" ] && DEP_FILES="$DEP_FILES $f"
+done
+DEP_FILES="$REQUIRED_DEPS $STUB_OK_DEPS"
+rc=0
+apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
+[ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
+gate_pass deps_installed
+CASE
+guard_case f1j_list_repointed_topdeps refuse 'RE-ASSIGNED' "$F_CASES/f1j_list_repointed_topdeps.stage"
+
+# apk is handed the RAW staged list, which still contains the package under test:
+# the exclusion is what makes the list the closure. Must be refused.
+mkbody f1k_offers_raw_staged_apks <<'CASE'
+echo ""
+echo "=== (2) dependency packages ==="
+DEP_FILES=""
+for f in $STAGED_APKS; do
+  [ "$f" != "$PKG_APK" ] && DEP_FILES="$DEP_FILES $f"
+done
+rc=0
+apk add --no-network --allow-untrusted $STAGED_APKS || rc=$?
+[ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
+gate_pass deps_installed
+CASE
+guard_case f1k_offers_raw_staged_apks refuse 'still contains the package under test' "$F_CASES/f1k_offers_raw_staged_apks.stage"
+
+# The wave-3 defect re-expressed INSIDE the new loop: the closure is filtered by
+# dependency NAME, so only the deps the stage recognises are offered. Must be
+# refused.
+mkbody f1l_closure_filtered_by_name <<'CASE'
+echo ""
+echo "=== (2) dependency packages ==="
+DEP_FILES=""
+for f in $STAGED_APKS; do
+  if [ "$f" != "$PKG_APK" ]; then
+    case "$(basename "$f")" in
+      nodogsplash-*|jq-*|libmicrohttpd-no-ssl-*|libpthread-*) DEP_FILES="$DEP_FILES $f" ;;
+    esac
+  fi
+done
+rc=0
+apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
+[ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
+gate_pass deps_installed
+CASE
+guard_case f1l_closure_filtered_by_name refuse 'filters the staged files' "$F_CASES/f1l_closure_filtered_by_name.stage"
+
+# The exclusion the WRONG WAY ROUND (`!=` + `continue`), which appends ONLY the
+# package under test: a real bug that looked compliant. Must be refused.
+mkbody f1i_inverted_exclusion <<'CASE'
+echo ""
+echo "=== (2) dependency packages ==="
+DEP_FILES=""
+for f in $STAGED_APKS; do
+  [ "$f" != "$PKG_APK" ] && continue
+  DEP_FILES="$DEP_FILES $f"
+done
+rc=0
+apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
+[ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
+gate_pass deps_installed
+CASE
+guard_case f1i_inverted_exclusion refuse 'WRONG WAY ROUND' "$F_CASES/f1i_inverted_exclusion.stage"
 
 # A glob is not a closure: it sweeps the package under test back in while the
 # (dead) loop still looks compliant. Must be refused.
@@ -1777,6 +1935,7 @@ echo "=== (2) dependency packages ==="
 for f in $STAGED_APKS; do
   [ "$f" != "$PKG_APK" ] && DEP_FILES="$DEP_FILES $f"   # NOT apk add $REQUIRED_DEPS $STUB_OK_DEPS
 done
+rc=0
 apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
 [ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
 gate_pass deps_installed
@@ -1784,6 +1943,9 @@ CASE
 guard_case f2b_comment_mention_ok accept - "$F_CASES/f2b_comment_mention_ok.stage"
 
 # --- F3: the canonical captures the guard used to refuse ------------------------
+# NOTE (review F2): `|| rc=$?` with no `rc=0` is the shape that reports
+# REFUSED(7) on a SUCCESSFUL apk, so it is now REFUSED (f9 runs it); the
+# quoted-zero gate it used to prove is still covered, WITH the pre-init.
 mkbody f3a_rc_named_rc <<'CASE'
 echo ""
 echo "=== (2) dependency packages ==="
@@ -1795,8 +1957,24 @@ apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
 [ "$rc" != "0" ] && gate_fail deps_installed rc=$rc
 gate_pass deps_installed
 CASE
-guard_case f3a_rc_named_rc accept - "$F_CASES/f3a_rc_named_rc.stage"
+guard_case f3a_rc_named_rc refuse 'not pre-initialised' "$F_CASES/f3a_rc_named_rc.stage"
 
+mkbody f3a_rc0_named_rc <<'CASE'
+echo ""
+echo "=== (2) dependency packages ==="
+DEP_FILES=""
+for f in $STAGED_APKS; do
+  [ "$f" != "$PKG_APK" ] && DEP_FILES="$DEP_FILES $f"
+done
+rc=0
+apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
+[ "$rc" != "0" ] && gate_fail deps_installed rc=$rc
+gate_pass deps_installed
+CASE
+guard_case f3a_rc0_named_rc accept - "$F_CASES/f3a_rc0_named_rc.stage"
+
+# NOTE (review F2): the else-branch capture is correct, but `rc` is unset on a
+# SUCCESS (the assignment never runs), so the pre-init is required too.
 mkbody f3b_else_branch <<'CASE'
 echo ""
 echo "=== (2) dependency packages ==="
@@ -1804,6 +1982,7 @@ DEP_FILES=""
 for f in $STAGED_APKS; do
   [ "$f" != "$PKG_APK" ] && DEP_FILES="$DEP_FILES $f"
 done
+rc=0
 if apk add --no-network --allow-untrusted $DEP_FILES; then
   :
 else
@@ -1829,6 +2008,11 @@ CASE
 guard_case f3c_next_statement accept - "$F_CASES/f3c_next_statement.stage"
 
 # --- F4: `do` on its own line ---------------------------------------------------
+# NOTE (review F2): this case also carried an INVERTED exclusion — `[ … !=
+# "$PKG_APK" ] && continue` skips every dependency and keeps ONLY the package
+# under test, so the list it offers is not the closure. The guard must refuse
+# that (f4b pins it), so this case is now a REFUSAL and f4a keeps the
+# `do`-on-its-own-line tolerance with the exclusion the right way round.
 mkbody f4_newline_do <<'CASE'
 echo ""
 echo "=== (2) dependency packages ==="
@@ -1838,13 +2022,35 @@ do
   [ "$f" != "$PKG_APK" ] && continue
   DEP_FILES="$DEP_FILES $f"
 done
+rc=0
 apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
 [ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
 gate_pass deps_installed
 CASE
-guard_case f4_newline_do accept - "$F_CASES/f4_newline_do.stage"
+guard_case f4_newline_do refuse 'WRONG WAY ROUND' "$F_CASES/f4_newline_do.stage"
+
+# ... the same `do`-on-its-own-line stage with the exclusion the RIGHT way round
+# (and the required pre-init): still ACCEPTED, still shipped byte-identically.
+mkbody f4a_newline_do_ok <<'CASE'
+echo ""
+echo "=== (2) dependency packages ==="
+DEP_FILES=""
+for f in $STAGED_APKS
+do
+  [ "$f" = "$PKG_APK" ] && continue
+  DEP_FILES="$DEP_FILES $f"
+done
+rc=0
+apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
+[ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
+gate_pass deps_installed
+CASE
+guard_case f4a_newline_do_ok accept - "$F_CASES/f4a_newline_do_ok.stage"
 
 # --- F5: other correct spellings of the exclusion -------------------------------
+# NOTE (review F2): the equality+continue exclusion is correct, but the
+# `|| rc=$?` capture without a pre-init is not — the guard refuses it (f9 runs the
+# false REFUSED(7)), so the ACCEPT control carries the pre-init.
 mkbody f5a_equality_continue <<'CASE'
 echo ""
 echo "=== (2) dependency packages ==="
@@ -1853,6 +2059,7 @@ for f in $STAGED_APKS; do
   [ "$f" = "$PKG_APK" ] && continue
   DEP_FILES="$DEP_FILES $f"
 done
+rc=0
 apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
 [ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
 gate_pass deps_installed
@@ -1869,12 +2076,16 @@ for f in $STAGED_APKS; do
   esac
   DEP_FILES="$DEP_FILES $f"
 done
+rc=0
 apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
 [ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
 gate_pass deps_installed
 CASE
 guard_case f5b_case_continue accept - "$F_CASES/f5b_case_continue.stage"
 
+# NOTE (review F2): `test "$f" != … || continue` is a correct exclusion; the
+# missing pre-init is what is refused (f9 runs the false REFUSED(7)), so the
+# ACCEPT control carries it.
 mkbody f5c_test_continue <<'CASE'
 echo ""
 echo "=== (2) dependency packages ==="
@@ -1883,12 +2094,15 @@ for f in $STAGED_APKS; do
   test "$f" != "$PKG_APK" || continue
   DEP_FILES="$DEP_FILES $f"
 done
+rc=0
 apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
 [ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
 gate_pass deps_installed
 CASE
 guard_case f5c_test_continue accept - "$F_CASES/f5c_test_continue.stage"
 
+# NOTE (review F2): the `${…}` brace forms (including in the `for` list) are
+# correct; the pre-init is required too.
 mkbody f5d_brace_forms <<'CASE'
 echo ""
 echo "=== (2) dependency packages ==="
@@ -1896,6 +2110,7 @@ DEP_FILES=""
 for f in ${STAGED_APKS}; do
   [ "${f}" != "${PKG_APK}" ] && DEP_FILES="${DEP_FILES} ${f}"
 done
+rc=0
 apk add --no-network --allow-untrusted ${DEP_FILES} || rc=$?
 [ "${rc}" != 0 ] && gate_fail deps_installed rc=${rc}
 gate_pass deps_installed
@@ -1911,6 +2126,7 @@ if true; then
   for f in $STAGED_APKS; do
     [ "$f" != "$PKG_APK" ] && DEP_FILES="$DEP_FILES $f"
   done
+  rc=0
   apk add --no-network --allow-untrusted $DEP_FILES || rc=$?
   [ "$rc" != 0 ] && gate_fail deps_installed rc=$rc
   gate_pass deps_installed
@@ -1934,6 +2150,62 @@ guard_case f6b_reworded_banner refuse 'no stage (2) dependency-install region' "
 
 # --- F7: a non-UTF-8 installer fails with the re-pin guidance, not a traceback ---
 guard_case f7_non_utf8 refuse 'not valid UTF-8' -
+
+# --- F9: the accepted capture shape must not report a FAILURE on a SUCCESS ------
+# The second review's MAJOR 2: with `|| rc=$?` and no `rc=0`, a SUCCESSFUL apk
+# assigns nothing, `[ "$rc" != 0 ]` compares the EMPTY string to 0 and the gate
+# fires — a REFUSED(7) on a healthy box. This runs the shape the guard used to
+# ACCEPT (f3a/f4/f5a/f5c/f1e were exactly it) against an `apk` double that exits 0,
+# and requires the false refusal; then runs the fixed shape (the pre-init) against
+# the same double and requires the gate to PASS. The assertion cannot be vacuous:
+# the two runs differ only by the pre-init.
+F9_BIN="$WORK/rcshape-bin"
+mkdir -p "$F9_BIN"
+printf '#!/bin/sh\nexit 0            # the install SUCCEEDS\n' > "$F9_BIN/apk"
+chmod +x "$F9_BIN/apk"
+
+cat > "$WORK/rcshape-nopin.sh" <<'STAGE'
+#!/bin/sh
+gate_fail() { printf 'GATE %s FAIL: %s\n' "$1" "$2"; }
+gate_pass() { printf 'GATE %s PASS\n' "$1"; }
+apk add --no-network --allow-untrusted /does/not/matter || rc=$?
+if [ "$rc" != 0 ]; then
+  gate_fail deps_installed "apk add of the dependency files failed rc=$rc"
+  exit 7
+fi
+gate_pass deps_installed
+STAGE
+cat > "$WORK/rcshape-pin.sh" <<'STAGE'
+#!/bin/sh
+gate_fail() { printf 'GATE %s FAIL: %s\n' "$1" "$2"; }
+gate_pass() { printf 'GATE %s PASS\n' "$1"; }
+rc=0
+apk add --no-network --allow-untrusted /does/not/matter || rc=$?
+if [ "$rc" != 0 ]; then
+  gate_fail deps_installed "apk add of the dependency files failed rc=$rc"
+  exit 7
+fi
+gate_pass deps_installed
+STAGE
+PATH="$F9_BIN:$PATH" sh "$WORK/rcshape-nopin.sh" > "$WORK/rcshape-nopin.out" 2>&1
+nopin_rc=$?
+PATH="$F9_BIN:$PATH" sh "$WORK/rcshape-pin.sh" > "$WORK/rcshape-pin.out" 2>&1
+pin_rc=$?
+if grep -q 'deps_installed FAIL' "$WORK/rcshape-nopin.out"; then
+  pass 'rcshapenopin: a conditional capture with no pre-init reports deps_installed FAIL on a SUCCESSFUL apk (the false REFUSED(7) review F2 found)'
+else
+  fail "rcshapenopin: the no-pre-init shape did NOT report a failure — the f9 premise is wrong: $(cat "$WORK/rcshape-nopin.out")"
+fi
+if grep -q 'deps_installed PASS' "$WORK/rcshape-pin.out"; then
+  pass 'rcshapepin: the same stage WITH the rc=0 pre-init passes the gate on the same SUCCESSFUL apk (only the pre-init differs)'
+else
+  fail "rcshapepin: the pre-initialised shape did not pass: $(cat "$WORK/rcshape-pin.out")"
+fi
+if [ "$nopin_rc" -ne 0 ] && [ "$pin_rc" -eq 0 ]; then
+  pass "rcshape: only the pre-init separates a false failure from a healthy box (exit $nopin_rc vs $pin_rc)"
+else
+  fail "rcshape: the exit codes do not separate the shapes ($nopin_rc vs $pin_rc)"
+fi
 
 # --- F8: the provenance count is truthful ---------------------------------------
 F8_README="$WORK/out-depstage-fixed/tollgate-wrt-${VERSION}-${ARCH}-offline/README.md"
