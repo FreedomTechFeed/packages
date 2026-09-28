@@ -240,7 +240,26 @@ PKG_NAME:=tollgate-wrt
 # `0.6.0_alpha4` build is NOT offered this package (only pre-train devices are),
 # by construction — the version string sorts below the tag even though these
 # bytes are newer than it.
-PKG_VERSION:=0.6.0_alpha4_pre19
+#
+# pre20 takes the pre20 version string and NOTHING ELSE. Every commit on
+# master since the pre19 tag (1a516d6f) is bundle-builder / test-suite only
+# (#36 keepalive seed, #37 dep-closure, #38 guard, #40 guard-robustness, #41
+# nodogsplash config FILE, #42 COMFAST target docs), so the MODULE PIN and
+# PKG_HASH are deliberately UNCHANGED from pre19 — the module package bytes
+# are identical. The WAN-less bundle does move: OFFLINE_INSTALLER_REF is
+# advanced to 4cf9074f, the PRTA main tip that carries #186 (the nodogsplash
+# config FILE seeded before the keepalive section, upstream source of truth)
+# and #187 (the WAN-less surface contract). That is a repository variable,
+# not a file in this repo, so it does not appear in this diff — stated here so
+# the bundle change is not invisible to a reader of the pin.
+#
+# Ordering still holds (the pre19 line, unchanged):
+#     0.6.0_alpha2_pre13 < 0.6.0_alpha4_pre15 < ... < 0.6.0_alpha4_pre19
+#     < 0.6.0_alpha4_pre20 < 0.6.0_alpha4
+# PKG_SOURCE_TAG stays v0.6.0-alpha4: the module repo-root VERSION file at
+# PKG_SOURCE_VERSION is unchanged, and a repin that does not move the pin
+# must not move the tag either.
+PKG_VERSION:=0.6.0_alpha4_pre20
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
