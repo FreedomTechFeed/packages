@@ -1651,6 +1651,10 @@ fi
 #      UnicodeDecodeError.
 F_CASES="$WORK/guardcases"
 mkdir -p "$F_CASES"
+# Every ACCEPT case is appended here by guard_case() below and then RUN for real by
+# the F10 behavioural pass at the end of the group — so the set cannot silently
+# stay empty or drift from the case list.
+F_ACCEPT_NAMES=""
 F_TAIL='
 # === (3) package
 apk add --no-network --allow-untrusted --force-missing-repositories "$PKG_APK"
@@ -1683,6 +1687,11 @@ guard_case() {  # guard_case <name> <accept|refuse> <grep-fix|-> <stage-body>
   if assemble_e "$WORK/out-$name" --installer-dir "$dir"; then
     if [ "$expect" = accept ]; then
       pass "$name: ACCEPTED (anti-false-fail control)"
+      # Register for the F10 behavioural pass: "accepted" is a claim about the
+      # VERDICT, and the F-group's structural gap was exactly that nothing ran the
+      # accepted stage. Every ACCEPT case is therefore also executed at the end of
+      # the group and must offer the closure.
+      F_ACCEPT_NAMES="$F_ACCEPT_NAMES $name"
       if cmp -s "$dir/install-router.sh" "$bundle/install-router.sh"; then
         pass "$name: shipped byte-identical (the guard never writes)"
       else
@@ -2150,6 +2159,127 @@ guard_case f6b_reworded_banner refuse 'no stage (2) dependency-install region' "
 
 # --- F7: a non-UTF-8 installer fails with the re-pin guidance, not a traceback ---
 guard_case f7_non_utf8 refuse 'not valid UTF-8' -
+
+# --- F10: BEHAVIOUR — every accepted shape must OFFER THE CLOSURE when it runs ---
+# The structural gap the second review named, which matters more than any single
+# case: the F-group was ONE-DIRECTIONAL. guard_case() asserted that the guard
+# ACCEPTS a shape, and its byte-identical assertion only proved the file was not
+# rewritten — nothing ran the accepted stage. So an over-permissive guard passed
+# every test in the suite, which is exactly what happened, twice (#38 and #40).
+#
+# This closes the CLASS instead of the cases: each accepted F-group body is RUN on
+# a fresh-box apk double that records its argv, and the argv must equal the
+# bundle's OWN staged closure minus the package under test — the same oracle group
+# E uses. Two assertions per accepted shape (offered set + `deps_installed PASS`),
+# plus the negative controls that prove the assertion detects the dead-loop class.
+F_BEH_BIN="$WORK/behaviour-bin"
+mkdir -p "$F_BEH_BIN"
+cat > "$F_BEH_BIN/apk" <<'APK'
+#!/bin/sh
+# Records what it was offered. It does NOT model dependency resolution — that is
+# group E's job (whose double refuses the wave-3 transaction). The property this
+# pass tests is WHAT STAGE (2) HANDS apk, not whether the transaction resolves.
+set -u
+printf '%s\n' "$*" >> "${TG_APK_LOG:?}"
+exit 0
+APK
+chmod +x "$F_BEH_BIN/apk"
+
+# The staging context is the FIXED bundle's own set — the closure the guard itself
+# accepted and shipped. Every case body is run against THIS list, so a case that
+# offers anything but this set fails for a real reason (and the negative controls
+# below have a populated list to be measured against).
+fb_staged() {
+  local bundle="$WORK/out-depstage-fixed/tollgate-wrt-${VERSION}-${ARCH}-offline"
+  FB_STAGED="$(find "$bundle/pkgs" -type f -name '*.apk' | sort | tr '\n' ' ')"
+  FB_PKG="$(find "$bundle/pkgs" -type f -name 'tollgate-wrt_*.apk' | head -n1)"
+  FB_EXPECTED="$(printf '%s\n' $FB_STAGED | grep -v 'tollgate-wrt_' \
+                 | while read -r p; do basename "$p"; done | sort)"
+}
+fb_staged
+if [ -z "$FB_EXPECTED" ]; then
+  fail "F10: the staged closure the behavioural pass runs against is EMPTY — group E did not assemble a bundle"
+fi
+
+# Run ONE stage-(2) body the way the box would: the real STAGED_APKS, the real
+# package-under-test path (so the exclusion means what it means in the pin), the
+# gate helpers, and the argv-recording apk on PATH. Stage (3) is NOT appended:
+# this pass judges stage (2)'s offer, and stage (3) would add its own apk call.
+fb_run() { # fb_run <name> <body-file|-> <out-file> <apk-log>
+  local name="$1" body="$2" out="$3" logf="$4"
+  local runner="$WORK/behaviour-runner-$name.sh"
+  {
+    printf '#!/bin/sh\n'
+    printf 'fact() { :; }\n'
+    printf 'gate_pass() { printf "GATE %%s PASS %%s\\n" "$1" "$2"; }\n'
+    printf 'gate_fail() { printf "GATE %%s FAIL %%s\\n" "$1" "$2"; }\n'
+    printf 'fail_now() { printf "REFUSED(%%s)\\n" "$1"; exit "$1"; }\n'
+    printf 'STAGED_APKS="%s"\n' "$FB_STAGED"
+    printf 'PKG_APK="%s"\nAPK_NAME="%s"\n' "$FB_PKG" "$(basename "$FB_PKG")"
+    printf 'REQUIRED_DEPS="nodogsplash jq libmicrohttpd-no-ssl"\nSTUB_OK_DEPS="libpthread"\n'
+    if [ "$body" != "-" ]; then cat "$body"; fi
+  } > "$runner"
+  : > "$logf"
+  TG_APK_LOG="$logf" PATH="$F_BEH_BIN:$PATH" $FB_SH "$runner" > "$out" 2>&1
+}
+
+fb_offered() { # fb_offered <apk-log> -> sorted basenames apk was handed
+  tr ' ' '\n' < "$1" | grep -E '\.apk$' | while read -r p; do basename "$p"; done | sort
+}
+
+# behavioural_guard_case <name> <body-file> — RUN an accepted shape and assert on
+# what it actually handed apk, plus that its gate passes on a healthy apk.
+behavioural_guard_case() {
+  local name="$1" body="$2"
+  local out="$WORK/behaviour-$name.out" logf="$WORK/behaviour-$name.apklog"
+  fb_run "$name" "$body" "$out" "$logf"
+  local rc=$?
+  local offered; offered="$(fb_offered "$logf")"
+  FB_BEH_RUN=$((FB_BEH_RUN + 1))
+  if [ "$offered" = "$FB_EXPECTED" ]; then
+    pass "$name: BEHAVIOUR — the accepted stage runs and offers the WHOLE staged closure ($(printf '%s\n' "$FB_EXPECTED" | wc -l | tr -d ' ') staged files minus the package under test)"
+  else
+    fail "$name: BEHAVIOUR — the accepted stage does NOT offer the closure. offered: $(printf '%s' "$offered" | tr '\n' ' ')— expected: $(printf '%s' "$FB_EXPECTED" | tr '\n' ' ')"
+  fi
+  if [ "$rc" = 0 ] && grep -q '^GATE deps_installed PASS' "$out"; then
+    pass "$name: BEHAVIOUR — deps_installed PASSES on a healthy fresh-box apk (exit 0)"
+  else
+    fail "$name: BEHAVIOUR — the accepted stage does not reach a passing gate on a healthy apk (exit $rc): $(tail -n2 "$out" | tr '\n' ' ')"
+  fi
+}
+
+# --- F10a: the accepted shapes, RUN (populated by guard_case above) --------------
+FB_BEH_RUN=0
+for _beh in $F_ACCEPT_NAMES; do
+  behavioural_guard_case "$_beh" "$F_CASES/$_beh.stage"
+done
+if [ "$FB_BEH_RUN" -ge 10 ]; then
+  pass "F10: the behavioural pass ran on $FB_BEH_RUN accepted shapes (it is not an empty loop)"
+else
+  fail "F10: the behavioural pass only ran on $FB_BEH_RUN accepted shapes — the F-group's ACCEPT controls are not being run"
+fi
+
+# --- F10b: NEGATIVE CONTROLS — the assertion must detect the dead-loop class ------
+# Run the two shapes the second review shipped-green THROUGH THE SAME ORACLE. If
+# either offered the closure, the behavioural assertion above would be vacuous. Both
+# are bodies the guard REFUSES, so they were never assembled — the runner does not
+# need a bundle, only the .stage file.
+for _ctrl in f1c_heredoc_loop f1j_list_repointed_topdeps; do
+  fb_run "$_ctrl" "$F_CASES/$_ctrl.stage" \
+         "$WORK/behaviour-$_ctrl.out" "$WORK/behaviour-$_ctrl.apklog"
+  _rc=$?
+  _offered="$(fb_offered "$WORK/behaviour-$_ctrl.apklog")"
+  if [ "$_offered" = "$FB_EXPECTED" ]; then
+    fail "F10 control: $_ctrl DID offer the whole closure at runtime — the behavioural assertion cannot detect the dead-loop class"
+  else
+    pass "F10 control: $_ctrl does NOT offer the closure when RUN (offered: $(printf '%s' "$_offered" | tr '\n' ' ')— expected $(printf '%s\n' "$FB_EXPECTED" | wc -l | tr -d ' ')), so the behavioural assertion is not vacuous"
+  fi
+  if grep -q '^GATE deps_installed PASS' "$WORK/behaviour-$_ctrl.out"; then
+    pass "F10 control: $_ctrl still reaches a passing gate on a healthy double — its defect is visible ONLY to the behavioural check"
+  else
+    pass "F10 control: $_ctrl's gate does not pass either (exit $_rc) — refused for the right reason too"
+  fi
+done
 
 # --- F9: the accepted capture shape must not report a FAILURE on a SUCCESS ------
 # The second review's MAJOR 2: with `|| rc=$?` and no `rc=0`, a SUCCESSFUL apk
