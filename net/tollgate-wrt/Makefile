@@ -255,11 +255,34 @@ PKG_NAME:=tollgate-wrt
 #
 # Ordering still holds (the pre19 line, unchanged):
 #     0.6.0_alpha2_pre13 < 0.6.0_alpha4_pre15 < ... < 0.6.0_alpha4_pre19
-#     < 0.6.0_alpha4_pre20 < 0.6.0_alpha4
+#     < 0.6.0_alpha4_pre20 < 0.6.0_alpha4_pre21 < 0.6.0_alpha4
 # PKG_SOURCE_TAG stays v0.6.0-alpha4: the module repo-root VERSION file at
 # PKG_SOURCE_VERSION is unchanged, and a repin that does not move the pin
 # must not move the tag either.
-PKG_VERSION:=0.6.0_alpha4_pre20
+#
+# pre21 moves the pin and does nothing else — but unlike pre20, which took a
+# version string while the module had not moved, the module DID move this time,
+# so PKG_SOURCE_VERSION and PKG_HASH move with it (PKG_HASH is never recomputed
+# without a pin move, and is never left stale across one). The pin is now the
+# merged module main TIP 74cd6f99, which carries the three PRs the release was
+# waiting on:
+#   #625  the physical wired LAN ports move off the captive bridge onto
+#         br-private — a cabled client is an owner-class client with internet,
+#         the admin board and LuCI, and no payment step. This is the #607 SPLIT
+#         the operator approved for this release; the full role machinery
+#         (`tollgate.lan_ports.role`, `br-mgmt`) stays in #607, unmerged.
+#   #624  generate the admin password without `od` — OpenWrt 25.12.5 images
+#         ship a stripped busybox with no `od`, so the generator produced an
+#         empty string and no root password could be applied.
+#   #611  align golang.org/x/time across the nested modules so the contract
+#         gate passes.
+# NOT in this pin, and therefore NOT released by pre21: #605 (device-code
+# pairing) and #607 (the LAN-role machinery). They remain open.
+# PKG_SOURCE_TAG is UNCHANGED (v0.6.0-alpha4): the repo-root VERSION file at
+# 74cd6f99 is still v0.6.0-alpha4, re-verified by extracting the pinned
+# tarball's own VERSION rather than from memory, and enforced on every run by
+# test-pkg-tarball-parity.sh Gate B.
+PKG_VERSION:=0.6.0_alpha4_pre21
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -319,7 +342,7 @@ PKG_VERSION:=0.6.0_alpha4_pre20
 # them.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=afc86b3fa41415b38ab870e16749181bcca4eb80
+PKG_SOURCE_VERSION:=74cd6f994864d685016b5eb97617c86fd2dbc967
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -413,7 +436,7 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # `.../tar.gz/v0.6.0-alpha4?` resolves 200 but hashes DIFFERENTLY
 # (28d63edb…), i.e. it is not the commit tarball this pin builds from.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=e449a2ece6af63c1fabaf544833bfecf4839598680c0f17aaf866da164d363e2
+PKG_HASH:=3f281ce2c9c28e8c8eaf02567115c62c7b3c7674246c407d45cdf9e97edcb57e
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
