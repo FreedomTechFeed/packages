@@ -63,6 +63,20 @@ RELEASES = [
 # story differs (no apk-tools 3, no .adb indexes) and it is out of scope.
 OFFLINE_BUNDLES = [
     ("aarch64_cortex-a53", "mediatek-filogic", "25.12.5", "glinet_gl-mt3000", "apk"),
+    # mips_24kc / ath79-generic (GL.iNet AR300M family, qca9531). Added
+    # 2026-10-01: the apk lane had published this arch since the matrix landed,
+    # but no bundle existed for it, so a mips_24kc router with NO uplink could
+    # not resolve its 37-package closure and could not install. Measured: the
+    # closure resolves to 37 members with 0 unresolved against the published
+    # 25.12.5 ath79/generic indexes, and assembles to a 9.6 MB tarball.
+    #
+    # `profile` is glinet_gl-ar300m-lite -- the smallest AR300M profile
+    # (NOR/Lite, IMAGE_SIZE 16000k). Its device_packages is `kmod-usb2` alone;
+    # glinet_gl-ar300m16 is identical, and the NAND variant is not in the ath79
+    # package lane's profile set. Assuming the smallest profile bundles
+    # strictly MORE, which is the safe direction per the note above (the
+    # bundle's packages are additive; an already-present package is skipped).
+    ("mips_24kc", "ath79-generic", "25.12.5", "glinet_gl-ar300m-lite", "apk"),
 ]
 
 
