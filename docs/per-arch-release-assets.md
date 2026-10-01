@@ -31,7 +31,7 @@ The wizard can select these canonical tuples (see `arch.go`):
 |-----------------------|--------------------|---------------------|
 | `aarch64_cortex-a53`  | `mediatek-filogic` | GL-MT6000 (bench)   |
 | `mipsel_24kc`         | `mt7621`           | MT3000-class        |
-| `mips_24kc`           | `ath79-generic`    | —                   |
+| `mips_24kc`           | `ath79-generic`    | GL-AR300M (tester)  |
 | `x86_64`              | `x86-64`           | gl-gate             |
 
 ## Supported devices
@@ -109,35 +109,55 @@ memory-speed stability issue was fixed in 25.12.5 (upstream PRs #22929 /
 > tester with the device is being lined up, and this section will be updated
 > with real numbers once that has happened.
 
-### Compressed variants are built, but this feed does not publish them
+### Small-flash devices: the compressed variants exist, but not from a release
 
-The `upx-ultra-brute` artifacts are built by the module repo's CI and announced
-over Nostr (NIP-94 kind 1063, tag `compression=upx-ultra-brute`), but the
-release job here publishes only the default `.ipk`/`.apk` per
-(arch, target) row — so today a small-flash device cannot fetch the compressed
-variant from a release. Publishing the compressed variants (or a `small-flash`
-bundle alongside the existing per-arch one) is a candidate change to this
-repo's release matrix; it is not part of this documentation change.
+The `upx-ultra-brute` artifacts are built by the **module** repo's CI and
+announced over Nostr (NIP-94 kind 1063, tag `compression=upx-ultra-brute`), but
+the release job here publishes only the default `.ipk`/`.apk` per
+(arch, target) row — so a small-flash device cannot fetch a compressed variant
+from a release. Publishing the compressed variants (or a `small-flash` bundle
+alongside the existing per-arch one) is a candidate change to this repo's
+release matrix; it is not part of this documentation change.
 
-### Offline bundles are per-arch, not per-device
+The module repo does build a `mips_24kc` compressed variant
+(`build-package-ipk-upx-brute-mips-24kc.yml` and the `ipk-upx-fast-best` shard
+cover `--fast`, `--best` and `--brute`; `.ipk` only), so the artifact exists for
+mips — it is simply not a release asset here.
+
+### Offline (WAN-less) bundles are per-arch, not per-device
 
 The offline bundle is named `tollgate-wrt-<PKG_VERSION>-<arch>-offline.tar.gz`
 and there is exactly one per arch. `release-assets.py`'s `OFFLINE_BUNDLES` table
 and the `release-tooling.yml` self-test both assert that the bundle build matrix
 has one entry per expected bundle asset name, and the installer wizard's
-`tollgateArchAssets` map fetches the bundle by arch. A second bundle for the
-Cudy would collide with the existing `aarch64_cortex-a53` bundle name, so no
-per-device bundle entry is added.
+`tollgateArchAssets` map fetches the bundle by arch. A second bundle for a single
+device would collide with that arch's existing bundle name, so no per-device
+bundle entry is added.
 
 A device is still a real input to the bundle: the `profile` column of
 `OFFLINE_BUNDLES` (passed to `offline-bundle.py --profile`) names the
 `profiles.json` profile whose `device_packages` are assumed to already be in the
-base image. The `aarch64_cortex-a53` bundle assumes `glinet_gl-mt3000`, whose
+base image.
+
+`OFFLINE_BUNDLES` currently carries two rows:
+
+- `aarch64_cortex-a53` / `mediatek-filogic` / `25.12.5`, profile
+  `glinet_gl-mt3000`, `apk`
+- `mips_24kc` / `ath79-generic` / `25.12.5`, profile `glinet_gl-ar300m-lite`,
+  `apk`
+
+The `aarch64_cortex-a53` bundle assumes `glinet_gl-mt3000`, whose
 `device_packages` (`kmod-mt7915e`, `kmod-mt7981-firmware`, `mt7981-wo-firmware`,
 `kmod-hwmon-pwmfan`, `kmod-usb3`) are a **superset** of the Cudy WR3000 v1's
 (`kmod-mt7915e`, `kmod-mt7981-firmware`, `mt7981-wo-firmware`). The two extra
 kmods are not in `tollgate-wrt`'s dependency closure, so the existing bundle is
 correct for the Cudy and needs no per-device variant.
+
+The `mips_24kc` bundle assumes `glinet_gl-ar300m-lite`, whose `device_packages`
+is `kmod-usb2` alone — the smallest profile in the AR300M family
+(`glinet_gl-ar300m16` is identical). Assuming the smallest profile bundles
+strictly **more**, which is the safe direction: the bundle's members are
+additive and a package already in the base image is simply not needed.
 
 ## How it works
 
