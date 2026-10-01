@@ -80,18 +80,48 @@ jobs:
           set -euo pipefail
           bash net/tollgate-wrt/scripts/build-portal-bundle.sh
 
-      - name: Determine branch name
+      # SDK BRANCH PIN — a RELEASED OpenWrt branch, never the mutable
+      # snapshots/ tree (`master`).
+      #
+      # Measured 2026-10-01, PR #46, run 36842992536, job "Test aarch64_cortex-a72":
+      # the job fetched targets/bcm27xx/bcm2711/sha256sums at 09:30:57 and the
+      # 266 MB SDK tarball finished downloading at 09:42:31 — 12 minutes later.
+      # Upstream rotates snapshots continuously, so by the time the tarball
+      # landed it no longer matched the sums that had just been fetched, and the
+      # verify step inside openwrt/gh-action-sdk@v11 failed:
+      #     openwrt-sdk-...tar.zst: FAILED
+      #     sha256sum: WARNING: 1 computed checksum did NOT match
+      # 7 of the 8 arch jobs passed on that run; only the one whose SDK rotated
+      # mid-download died. The failure is a property of the MUTABLE tree and can
+      # strike any run on any arch, at the cost of a full ~30-minute job.
+      #
+      # A released version is immutable: releases/<version>/targets/<target>/
+      # sha256sums and the SDK tarball it describes never change, so verifying a
+      # download against them cannot race. Release-branch SDKs are already used
+      # in this repo by release-publish.yml (the openwrt-24.10 lane), so this is
+      # the same mechanism, not a new one.
+      #
+      # This replaces the previous "mirror the base branch" default, whose
+      # `master` fallback IS the mutable tree. The guard below fails the job
+      # loudly instead of silently building against a snapshot, and
+      # net/tollgate-wrt/test-feed-ci.sh Gate H asserts the pin (with a negative
+      # control that refuses a revert to `master`).
+      #
+      # The runtime-test container further down pulls
+      # openwrt/rootfs:<arch>-<branch>; it is NON-BLOCKING (continue-on-error)
+      # and known-broken upstream (openwrt/actions-shared-workflows#130), so this
+      # pin does not weaken the gate — the Build phase is the gate.
+      - name: Pin the SDK branch to an immutable release
         run: |
-          BRANCH="${GITHUB_BASE_REF#refs/heads/}"
-          case "$BRANCH" in
-            main|master|openwrt-[0-9]*\.[0-9]*)
-              ;;
-            *)
-              BRANCH="master"
+          SDK_BRANCH="openwrt-25.12"
+          case "$SDK_BRANCH" in
+            main|master|snapshot*|"")
+              echo "::error::SDK_BRANCH='$SDK_BRANCH' is a mutable snapshot tree. The SDK checksum race documented above (PR #46) returns with it: a snapshot's sha256sums can rotate between the sums fetch and the tarball download, failing this job for reasons unrelated to any PR. Pin a released openwrt-<major>.<minor> branch instead."
+              exit 1
               ;;
           esac
-          echo "Building for $BRANCH"
-          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          echo "Building against the immutable release branch $SDK_BRANCH"
+          echo "BRANCH=$SDK_BRANCH" >> $GITHUB_ENV
 
       # This feed's sole purpose is tollgate-wrt. Always build it so every PR
       # gives real signal about the package regardless of which paths changed.

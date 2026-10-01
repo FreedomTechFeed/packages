@@ -143,11 +143,48 @@ correct for the Cudy and needs no per-device variant.
 
 ### Test build (`multi-arch-test-build.yml`)
 
-Runs on every pull request. It calls the openwrt shared
-`multi-arch-test-build` workflow with a **custom matrix override** that adds
-`aarch64_cortex-a53`/`mediatek-filogic` alongside the existing arches. The
-shared workflow's default matrix does NOT include the bench GL-MT6000 arch, so
-the override is mandatory — without it the bench router's arch never builds.
+Runs on every pull request. The workflow is **vendored** in this repo rather
+than calling the openwrt shared workflow, for two reasons:
+
+1. It always builds `tollgate-wrt`. The upstream "Determine changed packages"
+   step only builds packages whose `*/Makefile` changed, so a workflow-only PR
+   would build generic test packages and give **zero** signal about the package
+   this feed exists to ship.
+2. It carries a **custom matrix override** that adds
+   `aarch64_cortex-a53`/`mediatek-filogic` alongside the existing arches. The
+   shared workflow's default matrix does NOT include the bench GL-MT6000 arch,
+   so without the override the bench router's arch never builds.
+
+The runtime smoke test in that workflow is deliberately **non-blocking**
+(`continue-on-error: true`): upstream `openwrt/actions-shared-workflows#130`
+makes it fail deterministically (kmods feed 404) even when the package built
+fine. The **Build** phase — which actually compiles `tollgate-wrt` — is the
+gate.
+
+#### The SDK branch is pinned to an immutable release (`openwrt-25.12`)
+
+The Build phase is `openwrt/gh-action-sdk`, which downloads an SDK tarball and
+verifies it against the `sha256sums` published beside it. **`snapshots/` is a
+mutable tree**, so that verification can race its own inputs: measured
+2026-10-01 on PR #46 (run `36842992536`, job `Test aarch64_cortex-a72`), the job
+fetched `targets/bcm27xx/bcm2711/sha256sums` at 09:30:57 and the 266 MB SDK
+tarball finished **12 minutes later** at 09:42:31 — upstream had rotated the
+snapshot in between, so the verify step failed with `1 computed checksum did
+NOT match`. Seven of the eight arch jobs passed on that run; only the one whose
+SDK rotated mid-download died. Nothing about the pull request caused it, and it
+costs a full ~30-minute job each time it lands.
+
+A **released** version is immutable — `releases/<version>/targets/<target>/`
+`sha256sums` and the SDK tarball it describes never change — so verifying a
+download against them cannot race. The workflow therefore pins
+`SDK_BRANCH=openwrt-25.12`, with a fail-closed guard that refuses
+`main|master|snapshot*` rather than silently falling back to a snapshot.
+`release-publish.yml` already builds its `openwrt-24.10` lane from a
+release-branch SDK, so this is the same mechanism, not a new one.
+
+`net/tollgate-wrt/test-feed-ci.sh` Gate H asserts the pin, and carries a
+negative control that mutates a copy of the workflow back to `master` and
+requires the check to refuse it — so the assertion cannot pass vacuously.
 
 ### Release publish (`release-publish.yml`)
 

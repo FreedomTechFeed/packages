@@ -14,6 +14,10 @@
 #      .apk/.ipk assets named deterministically:
 #        tollgate-wrt_<PKG_VERSION>_<arch>.apk / .ipk
 #      so the wizard can fetch the correct binary for the detected arch.
+#   3. (Gate H) The PR build MUST pin a RELEASED OpenWrt branch, never the
+#      mutable snapshots/ tree: a snapshot's sha256sums can rotate between the
+#      sums fetch and the SDK tarball download, failing the job for reasons
+#      unrelated to any PR (measured on PR #46, job aarch64_cortex-a72).
 #
 # Exit status: 0 = pass, 1 = fail.
 
@@ -133,6 +137,65 @@ if [ -n "$PR_WF" ]; then
     fi
 else
     fail "no vendored PR CI workflow always builds tollgate-wrt (PACKAGES=\"tollgate-wrt\")"
+fi
+
+
+# --- Gate H: the PR build pins an IMMUTABLE SDK release, never a snapshot -----
+# Measured 2026-10-01 on PR #46 (run 36842992536, job "Test aarch64_cortex-a72"):
+# the job fetched targets/bcm27xx/bcm2711/sha256sums at 09:30:57 and the 266 MB
+# SDK tarball finished at 09:42:31 -- 12 minutes later. Upstream rotates the
+# snapshots/ tree continuously, so the tarball no longer matched the sums that
+# had just been downloaded and `sha256sum -c` inside openwrt/gh-action-sdk@v11
+# failed with "1 computed checksum did NOT match". That is a property of a
+# MUTABLE tree, not of any PR: it can strike any run on any arch and costs a
+# full ~30-minute job (7 of 8 arch jobs passed on that run; only the one whose
+# SDK rotated mid-download died).
+#
+# The gate below pins the property that removes the race: the build branch must
+# be a RELEASED OpenWrt branch (releases/<version>/targets/<target>/sha256sums
+# and the SDK tarball it describes are immutable, so a verify can never race),
+# the pin must carry a fail-closed guard against the mutable names, and the
+# Build step must not be handed a `-master` snapshot ARCH.
+#
+# The negative control at the bottom mutates a copy back to `master` and
+# requires this check to REFUSE it -- without that, a check that always passes
+# would look identical to a check that works.
+sdk_pin_check() { # sdk_pin_check <workflow-file> ; rc 0 = pinned immutably
+    _f="$1"
+    _pin=$(grep -oE 'SDK_BRANCH="[^"]+"' "$_f" 2>/dev/null | head -n1 | sed 's/.*="//;s/"$//')
+    case "$_pin" in
+        openwrt-[0-9]*.[0-9]*) : ;;
+        "") echo "no SDK_BRANCH=\"openwrt-<major>.<minor>\" pin found (a mutable snapshot tree would be built against)"; return 1 ;;
+        *)  echo "SDK_BRANCH='$_pin' is not a released openwrt-<major>.<minor> branch"; return 1 ;;
+    esac
+    if ! grep -qE 'main\|master\|snapshot\*' "$_f"; then
+        echo "the pin has no fail-closed guard refusing master/main/snapshot*"
+        return 1
+    fi
+    if grep -qE 'ARCH: \$\{\{ matrix\.arch \}\}-master' "$_f"; then
+        echo "the Build step still receives the '-master' snapshot ARCH"
+        return 1
+    fi
+    return 0
+}
+
+PR_BUILD_WF="$ROOT/.github/workflows/multi-arch-test-build.yml"
+if [ ! -f "$PR_BUILD_WF" ]; then
+    fail "the vendored PR build workflow is missing: $PR_BUILD_WF"
+else
+    if _why=$(sdk_pin_check "$PR_BUILD_WF"); then
+        ok "the PR build is pinned to an immutable released SDK branch (no snapshot race)"
+    else
+        fail "the PR build can hit the SDK snapshot checksum race: $_why"
+    fi
+    _ctl=$(mktemp)
+    sed 's/^\( *SDK_BRANCH=\)"openwrt-[0-9.]*"/\1"master"/' "$PR_BUILD_WF" > "$_ctl"
+    if sdk_pin_check "$_ctl" >/dev/null 2>&1; then
+        fail "control: a workflow pinned to the mutable 'master' snapshot branch was ACCEPTED (the check is vacuous)"
+    else
+        ok "control: the check refuses a workflow pinned back to the mutable master snapshot branch"
+    fi
+    rm -f "$_ctl"
 fi
 
 if [ "$FAIL" = 1 ]; then
