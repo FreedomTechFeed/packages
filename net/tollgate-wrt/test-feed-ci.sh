@@ -135,6 +135,78 @@ else
     fail "no vendored PR CI workflow always builds tollgate-wrt (PACKAGES=\"tollgate-wrt\")"
 fi
 
+
+# --- Gate F: the apk lane that was shipped without a WAN-less bundle ----------
+# (2026-10-01) The offline bundle is what lets a FRESH, WAN-less flash install
+# tollgate-wrt. The apk lane publishes mips_24kc (ath79-generic) as a real
+# per-arch row, so a mips_24kc router with no uplink had NO bundle and could not
+# resolve its dependency closure. The gap was invisible from the package matrix
+# alone: the apk lane and the bundle lane are SEPARATE tables in
+# release-assets.py (RELEASES vs OFFLINE_BUNDLES).
+#
+# The assertion is scoped to THIS arch on purpose. A bundle is a per-arch
+# dependency closure resolved against a pinned OpenWrt release, so "every
+# apk-lane arch has a bundle" is the right long-term property but not one this
+# change can claim -- the arches still without a bundle are REPORTED below
+# rather than asserted, so the test states the gap instead of hiding it.
+#
+# Both checks parse the tables, not the file text: grepping the Makefile or the
+# script for "mips_24kc\" \"ath79-generic\"" also matches the RELEASES table,
+# which is how a vacuous version of this gate passed while the bundle row was
+# absent.
+python3 - "$ROOT/.github/workflows/scripts/release-assets.py" > "$ROOT/.bundle-gate.$$" 2>&1 <<'PY'
+import json, subprocess, sys
+assets_py = sys.argv[1]
+def rows(*argv):
+    out = subprocess.run(["python3", assets_py, *argv], capture_output=True,
+                         text=True, check=True).stdout
+    return json.loads(out)["include"]
+apk_arches = sorted({r["arch"] for r in rows("matrix") if r["ext"] == "apk"})
+bundles = rows("offline-matrix")
+bundle_arches = sorted({r["arch"] for r in bundles})
+print("apk-lane arches:    %s" % " ".join(apk_arches))
+print("bundle-lane arches: %s" % " ".join(bundle_arches))
+mips = [r for r in bundles if r["arch"] == "mips_24kc"]
+if not mips:
+    print("FAIL mips_24kc has no OFFLINE_BUNDLES row (mips AR300M-class routers cannot install WAN-less)")
+    sys.exit(1)
+row = mips[0]
+if row["target"] != "ath79-generic":
+    print("FAIL the mips_24kc bundle row targets %r, not ath79-generic" % row["target"])
+    sys.exit(1)
+if not row["profile"].startswith("glinet_gl-ar300m"):
+    print("FAIL the mips_24kc bundle row names profile %r; expected a glinet_gl-ar300m* device profile "
+          "(the profile decides which base-image packages are assumed already present)" % row["profile"])
+    sys.exit(1)
+if row["ext"] != "apk" or row["release"] != "25.12.5":
+    print("FAIL the mips_24kc bundle row is release=%r ext=%r; the apk lane bundles are resolved against "
+          "the OpenWrt release the router runs and are apk-tools 3 only" % (row["release"], row["ext"]))
+    sys.exit(1)
+print("PASS mips_24kc bundle row: target=%s profile=%s release=%s ext=%s"
+      % (row["target"], row["profile"], row["release"], row["ext"]))
+still_missing = [a for a in apk_arches if a not in bundle_arches]
+print("NOTICE apk-lane arches still without a WAN-less bundle (not asserted by this gate): %s"
+      % (", ".join(still_missing) or "none"))
+PY
+BUNDLE_RC=$?
+sort -t' ' -k1 .bundle-gate.$$ 2>/dev/null | sed -n 's/^NOTICE /NOTICE: /p'
+if [ "$BUNDLE_RC" = 0 ]; then
+    ok "$(grep -m1 '^PASS ' .bundle-gate.$$ | sed 's/^PASS //')"
+    ok "every apk-lane arch's bundle coverage is accounted for (gaps reported, not hidden)"
+else
+    fail "$(grep -m1 '^FAIL ' .bundle-gate.$$ | sed 's/^FAIL //')"
+fi
+rm -f .bundle-gate.$$
+
+# The bundle carries the tollgate-wrt .apk for its arch, so the package matrix
+# entry must still exist or the bundle would ship nothing to install.
+if python3 "$ROOT/.github/workflows/scripts/release-assets.py" matrix \
+     | python3 -c 'import json,sys; d=json.load(sys.stdin)["include"]; sys.exit(0 if any(r["arch"]=="mips_24kc" and r["ext"]=="apk" for r in d) else 1)'; then
+    ok "the mips_24kc .apk is still built (the bundle ships it)"
+else
+    fail "the mips_24kc .apk is no longer in the build matrix (the bundle would ship nothing)"
+fi
+
 if [ "$FAIL" = 1 ]; then
     echo "test-feed-ci: FAILED" >&2
     exit 1
