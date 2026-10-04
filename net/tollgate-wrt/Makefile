@@ -255,7 +255,8 @@ PKG_NAME:=tollgate-wrt
 #
 # Ordering still holds (the pre19 line, unchanged):
 #     0.6.0_alpha2_pre13 < 0.6.0_alpha4_pre15 < ... < 0.6.0_alpha4_pre19
-#     < 0.6.0_alpha4_pre20 < 0.6.0_alpha4_pre21 < 0.6.0_alpha4
+#     < 0.6.0_alpha4_pre20 < 0.6.0_alpha4_pre21 < 0.6.0_alpha4_pre22
+#     < 0.6.0_alpha4
 # PKG_SOURCE_TAG stays v0.6.0-alpha4: the module repo-root VERSION file at
 # PKG_SOURCE_VERSION is unchanged, and a repin that does not move the pin
 # must not move the tag either.
@@ -282,7 +283,29 @@ PKG_NAME:=tollgate-wrt
 # 74cd6f99 is still v0.6.0-alpha4, re-verified by extracting the pinned
 # tarball's own VERSION rather than from memory, and enforced on every run by
 # test-pkg-tarball-parity.sh Gate B.
-PKG_VERSION:=0.6.0_alpha4_pre21
+#
+# pre22 moves the pin and does nothing else — the same shape as pre21 (the
+# module moved, so PKG_SOURCE_VERSION and PKG_HASH move with it; PKG_HASH is
+# never recomputed without a pin move, and is never left stale across one). The
+# pin is now the merged module main TIP 8b9ba86e, ONE commit past pre21's
+# 74cd6f99:
+#   #638  the owner-network API exemption. 30-backend-firewall.nft dropped
+#         :2121 for every interface except br-lan and lo, and the admin board
+#         lives on br-private — so the :8090 config UI rendered and every data
+#         call it then made (http://<router>:2121/) was dropped silently, with
+#         nothing the user could act on. The exemption set becomes
+#         { "br-lan", "br-private", "lo" } for both nfproto families. The FEED
+#         ships this without a feed-side file change because the install recipe
+#         stages the module's WHOLE etc/nftables.d/ directory by wildcard, so
+#         the fragment rides the pin move.
+# Nothing else moves: PKG_SOURCE_TAG stays v0.6.0-alpha4 (the repo-root VERSION
+# file at 8b9ba86e is still v0.6.0-alpha4, re-verified by extracting the pinned
+# tarball's own VERSION rather than from memory, and enforced on every run by
+# Gate B), and the portal lock is untouched because #638 changes no portal file.
+# Still NOT in this pin, and therefore still NOT released by pre22: #605
+# (device-code pairing) and #607 (the LAN-role machinery) — the same two pre21
+# named.
+PKG_VERSION:=0.6.0_alpha4_pre22
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -342,7 +365,13 @@ PKG_VERSION:=0.6.0_alpha4_pre21
 # them.
 # It drives the download URL/tarball name and the SHA-named build dirs below —
 # never the package version — so the two can differ legally.
-PKG_SOURCE_VERSION:=74cd6f994864d685016b5eb97617c86fd2dbc967
+# pre22 advances the pin to 8b9ba86e — module main TIP (0 commits behind
+# main), replacing the 74cd6f99 pin. Exactly ONE commit separates them: #638,
+# the :2121 owner-network exemption in
+# packaging/files/etc/nftables.d/30-backend-firewall.nft (see the pre22 block
+# above). PKG_SOURCE_TAG and the portal lock are deliberately left alone for the
+# reasons recorded in that block.
+PKG_SOURCE_VERSION:=8b9ba86eed449c89f8da5376d9f4470ec0715515
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -435,8 +464,19 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # WITHOUT the '?' requests `.../tar.gz/<sha>/<name>` and 404s, and the tag form
 # `.../tar.gz/v0.6.0-alpha4?` resolves 200 but hashes DIFFERENTLY
 # (28d63edb…), i.e. it is not the commit tarball this pin builds from.
+# pre22 re-calibrated on its pin move exactly as every earlier bump did:
+# replaying the identical construction for the OUTGOING pin (74cd6f99)
+# reproduced that pin's committed
+# 3f281ce2c9c28e8c8eaf02567115c62c7b3c7674246c407d45cdf9e97edcb57e exactly
+# (codeload reports 1486136 bytes for it), so the same construction for
+# 8b9ba86e yields
+# b439a433143f6261653d6de50e71658e7343366cf4306acdd3a221bb15d88271 — the value
+# committed below (codeload reports 1491187 bytes for it). A PKG_HASH is NEVER
+# carried across a pin move: Gate A below fails a moved pin whose hash was not
+# recalibrated, and this value comes from a fresh download of the NEW pin, not
+# from the outgoing one.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=3f281ce2c9c28e8c8eaf02567115c62c7b3c7674246c407d45cdf9e97edcb57e
+PKG_HASH:=b439a433143f6261653d6de50e71658e7343366cf4306acdd3a221bb15d88271
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
