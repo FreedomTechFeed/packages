@@ -257,6 +257,7 @@ PKG_NAME:=tollgate-wrt
 #     0.6.0_alpha2_pre13 < 0.6.0_alpha4_pre15 < ... < 0.6.0_alpha4_pre19
 #     < 0.6.0_alpha4_pre20 < 0.6.0_alpha4_pre21 < 0.6.0_alpha4_pre22
 #     < 0.6.0_alpha4_pre23 < 0.6.0_alpha4
+#     < 0.6.0_alpha4_pre23 < 0.6.0_rc1_pre24 < 0.6.0_rc1
 # PKG_SOURCE_TAG stays v0.6.0-alpha4: the module repo-root VERSION file at
 # PKG_SOURCE_VERSION is unchanged, and a repin that does not move the pin
 # must not move the tag either.
@@ -343,7 +344,57 @@ PKG_NAME:=tollgate-wrt
 # The portal lock is untouched because none of the four commits changes portal
 # content -- the only portal-adjacent path in the diff is the module's own
 # packaging/portal-build.sh, which is module source, not portal content.
-PKG_VERSION:=0.6.0_alpha4_pre23
+# ---------------------------------------------------------------------------
+# pre24 moves the pin and does nothing else -- the same shape as every repin before it:
+# the module moved, so PKG_SOURCE_VERSION and PKG_HASH move with it (PKG_HASH is
+# never recomputed without a pin move and never left stale across one), and no
+# other feed-side file changes.
+# The pin is now the merged module main tip 2de7955, and the repo-root VERSION file
+# inside that tarball is v0.6.0-rc1, so PKG_SOURCE_TAG moves with it
+# (v0.6.0-alpha4 -> v0.6.0-rc1) -- Gate B in test-pkg-tarball-parity.sh compares the two
+# and fails the build if they disagree.
+# Delta since cec2222 (57 commit(s)):
+#   fix(merchant): make the test log capture concurrency-safe (intermittent -race failure) (#622)
+#   fix(merchant): a concurrent duplicate of one note is refused before the mint, not raced past its spend-state (#641)
+#   fix(valve): a "client not found" answer is only evidence about the MAC it names (#617)
+#   ci(ngit): stamp stage 1 from the commit, never the runner clock (#529)
+#   fix(packaging): refuse to build a local .ipk without staged portal bundles (#556)
+#   fix(utils): hex-encode the fingerprint salt — raw edge bytes corrupted reloads (#571)
+#   fix(wallet): no same-body retry after an ambiguous mint outcome — repin gonuts v0.13.0, classify as outcome-unknown (#640) (#660)
+#   fix(merchant): a paid purchase whose gate cannot open is an owed entitlement, not a lost one (#403) (#661)
+#   test(fleet): require credentials from the environment, not public defaults (#528)
+#   fix(merchant): bound the fee precheck against wedged mints (#525) (#533)
+#   docs(operator-guide): cover the ssl family and upstream known; regen man pages (#662)
+#   fix(cli): bound fw4 reload on the daemon start path — a wedged firewall must not stall the service before Serve (#637) (#654)
+#   fix(config): config.json writes are atomic and a missing config is announced (#402 hardening) (#655)
+#   fix(config): min_steps floors at 1 — parser accepts the legacy spelling, schema and templates say 1 (supersedes #634, ports fork #104) (#656)
+#   ci: enroll in org gitleaks scanning; watch main on push (ports fork #91 + #98's follow-up) (#657)
+#   fix(config): refuse an out-of-bounds private_key at config set — a persisted credential the applier will refuse forever is a dead end (#636) (#652)
+#   fix(cli): config get no longer returns the identities' Nostr private keys — blanked, reported via secret_set, preserved on save (#635) (#653)
+#   test(cloud-lab): conformance fast-subset lane over the PRTA fault proxy (#503) (#535)
+#   make: one release-check gate that orchestrates the existing gates — plus the two gate repairs it exposed (#658)
+#   release: v0.6.0-rc1 — feature freeze (merge last) (#659)
+#   docs(agents): the gonuts bump touches four go.mod files, not three (#647)
+#   deps(wallet): bump gonuts-tollgate v0.13.0 — NUT-20 cdk-interop signatures + per-route POST retry policy (#643)
+#   docs(readme): the WR3000 25.12 install paragraph gains the feed-shape caveat (#552) (#644)
+#   test(packaging): an apk3 dependency-resolution smoke gates the release apk (#645)
+#   fix(build): build-sdk-package.sh compiles package main, not main.go alone (#646)
+#   fix(lane): resolve the conflict-marker residue #658's rebase left in run-conformance.sh (#663)
+#   test(merchant): the owed-grant AUTH assertion polls for its own condition (#664)
+#   docs(agents): hardware and VM testing is coordinated through labgrid (#666)
+#   docs: decision records rebased — discovery signaling (#621), ADR citations (#626), host-mode admin (#632) (#667)
+#   feat(setup): the gateway serves NTP pre-auth — time before payment (#627) (#648)
+#   test(packaging): rootfs-container tier for uci-defaults validation — rebase of #530 (#671)
+#   test(contract): pin the shipped AP SSID format — rebase of #524 (#672)
+#   feat(upstream): cold-start reseller bootstrap — forward the first proof whole (#239 phase 2a) (#629)
+#   test(cloud-lab): run-scoped lab runner + shared-host runbook (#557)
+#   docs(tests): map the test estate in the parent README (#674)
+#   test(cloud-lab): one payment suite against many mints (signet zoo matrix) — rebase of #522 (#673)
+#   fix(vendor-ie): explicit 255-byte overflow policy — truncate the mint TLV, report it, never silently diverge (#675)
+#   docs(tests): the cloud-lab runbook is in main — drop the stale hedge (#677)
+#   fix(upstream): reseller renewals self-deadlock — bootstrap candidate check must not run under paymentMu (#629 follow-up) (#678)
+#   test(cloud-lab): #497 crash-window harness — SIGKILL between mint-signed and wallet-save (#676)
+PKG_VERSION:=0.6.0_rc1_pre24
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -415,7 +466,7 @@ PKG_VERSION:=0.6.0_alpha4_pre23
 # deliberately left alone: the tarball's own VERSION file is still
 # v0.6.0-alpha4 (Gate B enforces it on every run), and none of the four touches
 # portal content.
-PKG_SOURCE_VERSION:=cec22228487353dc61c5c89650ca02957c81b77c
+PKG_SOURCE_VERSION:=2de7955ed5856bdd7f66cd43abec0f0d4fc34c00
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -438,7 +489,7 @@ PKG_SOURCE_VERSION:=cec22228487353dc61c5c89650ca02957c81b77c
 # writes a setup marker no upstream build writes, and an unchanged marker sends
 # an upgrade down 99-tollgate-setup's same-version path where the new full-setup
 # work never runs.
-PKG_SOURCE_TAG:=v0.6.0-alpha4
+PKG_SOURCE_TAG:=v0.6.0-rc1
 # Short SHA for that human-facing version string; the full SHA stays in
 # GitCommit, which is what a bug report should quote.
 PKG_SOURCE_SHA7:=$(shell printf '%s' $(PKG_SOURCE_VERSION) | cut -c1-7)
@@ -531,7 +582,7 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # recalibrated, and this value comes from a fresh download of the NEW pin, not
 # from the outgoing one.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=c7a7c85481a438e87219a3113bb1363f8d24a1acf25b810a21bcf0ac43bbe347
+PKG_HASH:=afdf4115906576f522c8cafe12699c255a4eb2a6442b918f40b2f90fee4d7bcd
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
