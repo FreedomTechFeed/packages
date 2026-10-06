@@ -82,8 +82,11 @@
 #      login showed a hard certificate error -- with each writer's own premise
 #      satisfied. J.a each script evaluates the shared predicate; J.b each
 #      writes an explicit value in BOTH directions; J.c every
-#      redirect_https='1' is armed by a condition that names the predicate,
-#      never by an existence test of the placeholder (the pre17 defect); J.d the
+#      redirect_https='1' is armed by the coverage predicate -- either the
+#      condition names it, or it tests a flag only the predicate can arm (the
+#      module #612 hoist; the Gate J block lists the accepted shapes and the
+#      control that keeps the extension from accepting everything) -- and never by
+#      an existence test of the placeholder (the pre17 defect); J.d the
 #      two fingerprints are identical, so the writers cannot drift onto two
 #      different checkers. The two files are at DIFFERENT pins on purpose (92 is
 #      vendored from vendor.lock.json -> portal_commit, 99 comes from the module
@@ -576,6 +579,21 @@ fi
 # same rule; the pre17 bench defect is what happens when they do not (the board's
 # :8443 carried the image's placeholder certificate and :8090 redirected to it --
 # a hard certificate error on every admin login). See the header.
+#
+# Gate J.c accepts TWO guard shapes, because this gate recognises a guard by WHAT
+# the script does, not by how it is spelled. Either the arming condition names the
+# predicate (`if [ -n "$cert" ] && cert_covers_router "$cert"; then`), or it tests
+# a flag that ONLY the predicate can arm:
+#       local ... covers="0"                        # default FALSE
+#       if cert_covers_router "$candidate_cert"; then ... covers="1" ...
+#       if [ "$covers" = "1" ]; then ... redirect_https='1' ...
+# The second shape is the module's #612 refactor (measured 2026-10-06 against the
+# cec22228 pin): the derived hop is decided once, before the uhttpd listeners are
+# written, so the arming line no longer repeats the predicate call. Accepting it is
+# not a weakening: the flag counts as guarded only when it defaults false, EVERY
+# truthy assignment to it sits under a condition naming the predicate, and nothing
+# else assigns it -- and gate_jc_control proves on every run that a flag the
+# predicate does not gate is still reported as unguarded.
 GATE_J_92="$FEED/files/uci-defaults/92-tollgate-admin-setup"
 GATE_J_99=""
 if [ -n "$TOP" ]; then
@@ -614,31 +632,140 @@ predicate_funcs() {
     ' "$1" | LC_ALL=C sort -u | tr '\n' ' '
 }
 
-# Every redirect_https='1' assignment whose guarding condition does not name the
-# predicate. The condition is read from the nearest preceding if/elif line
-# through its "then", so a multi-line condition counts in full.
+# Every redirect_https='1' assignment whose guarding condition neither names the
+# predicate nor tests a flag that only the predicate can arm. The condition is
+# read from the nearest preceding if/elif line through its "then", so a
+# multi-line condition counts in full. Both accepted shapes are described above.
 unguarded_arms() {   # $1=file $2=space-separated predicate function names
-    awk -v q="'" -v preds="$2" '
+    awk -v q="'" -v qc="[\"']" -v preds="$2" '
         BEGIN {
             n = split(preds, p, " ")
             for (i = 1; i <= n; i++) if (p[i] != "") want[p[i]] = 1
         }
-        /^[[:space:]]*#/ { next }
-        {
-            if ($0 ~ /^[[:space:]]*(if|elif)[[:space:]]/) { incond = 1; cond = "" }
-            if (incond) {
-                cond = cond " " $0
-                if ($0 ~ /;[[:space:]]*then[[:space:]]*$/ || $0 ~ /^[[:space:]]*then[[:space:]]*$/) incond = 0
+        # Does this condition text name the predicate, directly or by calling a
+        # function whose body invokes it?
+        function names_pred(c,   nm) {
+            if (c ~ /ssl[[:space:]]+covers/) return 1
+            for (nm in want) if (index(c, nm) > 0) return 1
+            return 0
+        }
+        # The variables a condition tests with `= "1"` / `= 1`, space-separated:
+        # the hoisted shape (module #612) arms the hop from a flag, not a call.
+        function tested_vars(c,   s, out) {
+            out = ""
+            while (match(c, /\$"?[A-Za-z_][A-Za-z0-9_]*"?[[:space:]]*=[[:space:]]*"?1"?/)) {
+                s = substr(c, RSTART, RLENGTH)
+                c = substr(c, RSTART + RLENGTH)
+                gsub(/[\$"[:space:]]/, "", s)
+                sub(/=1$/, "", s)
+                if (s != "") out = out " " s
             }
-            if (index($0, "redirect_https=" q "1" q) > 0) {
-                hit = 0
-                if (cond ~ /ssl[[:space:]]+covers/) hit = 1
-                for (nm in want) if (index(cond, nm) > 0) hit = 1
-                if (hit == 0) printf "%d: %s\n", FNR, $0
-                incond = 0
+            return out
+        }
+        { L[NR] = $0 }
+        END {
+            fn = 0; incond = 0; cond = ""; k = 0
+            for (i = 1; i <= NR; i++) {
+                line = L[i]
+                if (line ~ /^[[:space:]]*#/) continue
+                if (line ~ /^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)/) { fn++; incond = 0; cond = ""; continue }
+                if (line ~ /^[[:space:]]*(if|elif)[[:space:]]/) { incond = 1; cond = "" }
+                if (incond) {
+                    cond = cond " " line
+                    if (line ~ /;[[:space:]]*then[[:space:]]*$/ || line ~ /^[[:space:]]*then[[:space:]]*$/) incond = 0
+                }
+                # Classify every assignment on the line by its value: false
+                # default (0/""), truthy (1/true), or anything else (a flag that
+                # carries a value the predicate does not decide).
+                m = split(line, tok, /[[:space:];]+/)
+                for (j = 1; j <= m; j++) {
+                    if (tok[j] !~ /^[A-Za-z_][A-Za-z0-9_]*=/) continue
+                    eq = index(tok[j], "=")
+                    vname = substr(tok[j], 1, eq - 1)
+                    vval = substr(tok[j], eq + 1)
+                    # Normalise the literal first: "0", '0' and 0 are one value,
+                    # and the same for the truthy spellings. Without this a quoted
+                    # default is read as a value the predicate does not decide.
+                    v = vval
+                    gsub("^" qc, "", v)
+                    gsub(qc "$", "", v)
+                    key = fn SUBSEP vname
+                    if (v == "" || v == "0" || v == "false" || v == "no") {
+                        if (!(key in vfalse)) vfalse[key] = i
+                    } else if (v == "1" || v == "true" || v == "yes") {
+                        vtrue[key]++
+                        if (names_pred(cond) == 0) vbad[key]++
+                        if (!(key in vfirst)) vfirst[key] = i
+                    } else {
+                        vother[key] = 1
+                    }
+                }
+                if (index(line, "redirect_https=" q "1" q) > 0) {
+                    k++
+                    armline[k] = i; armtext[k] = line; armcond[k] = cond; armfn[k] = fn
+                    incond = 0
+                }
+            }
+            for (k2 = 1; k2 <= k; k2++) {
+                hit = names_pred(armcond[k2])
+                if (hit == 0) {
+                    nv = split(tested_vars(armcond[k2]), vv, " ")
+                    for (j = 1; j <= nv; j++) {
+                        key = armfn[k2] SUBSEP vv[j]
+                        # Guarded only if: the flag has a false default, the
+                        # predicate is the sole setter of every truthy value, and
+                        # nothing else assigns it.
+                        if ((key in vfalse) && (key in vtrue) && !(key in vbad) && !(key in vother) && vfalse[key] < vfirst[key]) hit = 1
+                    }
+                }
+                if (hit == 0) printf "%d: %s\n", armline[k2], armtext[k2]
             }
         }
     ' "$1"
+}
+
+# Gate J.c's own control. The extension above accepts a second guard shape, so it
+# must be shown to still REJECT a flag the predicate does not gate -- otherwise an
+# "extension" that accepts everything would pass invisibly. Two synthetic writers,
+# one per shape: the first is the module's #612 refactor, the second initialises
+# the flag true and arms it from a test the predicate never decides.
+gate_jc_control() {
+    gjc_ok="$SCRATCH/jc-control-hoisted.sh"
+    gjc_bad="$SCRATCH/jc-control-ungated.sh"
+    cat > "$gjc_ok" <<'JC_OK'
+setup_uhttpd_tls_identity() {
+    local cert="" key="" covers="0"
+    if cert_covers_router "$cert"; then
+        cert="$cert"
+        covers="1"
+    fi
+    if [ "$covers" = "1" ]; then
+        uci set uhttpd.main.redirect_https='1'
+    else
+        uci set uhttpd.main.redirect_https='0'
+    fi
+}
+JC_OK
+    cat > "$gjc_bad" <<'JC_BAD'
+setup_uhttpd_tls_identity() {
+    local cert="" key="" covers="1"
+    if [ -n "$cert" ]; then
+        covers="1"
+    fi
+    if [ "$covers" = "1" ]; then
+        uci set uhttpd.main.redirect_https='1'
+    else
+        uci set uhttpd.main.redirect_https='0'
+    fi
+}
+JC_BAD
+    gjc_hit_ok=$(unguarded_arms "$gjc_ok" "cert_covers_router" | wc -l | tr -d ' ')
+    gjc_hit_bad=$(unguarded_arms "$gjc_bad" "cert_covers_router" | wc -l | tr -d ' ')
+    if [ "$gjc_hit_ok" = "0" ] && [ "$gjc_hit_bad" != "0" ]; then
+        ok "Gate J.c control: the hoisted guard is accepted (0 site(s)) and an ungated flag is still rejected ($gjc_hit_bad site(s))"
+    else
+        fail "Gate J.c control: the detection does not discriminate -- hoisted guard reported $gjc_hit_ok unguarded site(s) (want 0), ungated flag reported $gjc_hit_bad (want >=1). A predicate check that cannot fail is not a check."
+    fi
 }
 
 gate_j_one() {   # $1=file $2=label $3=where to write the fingerprint
@@ -675,13 +802,14 @@ gate_j_one() {   # $1=file $2=label $3=where to write the fingerprint
     unguarded_arms "$gj_f" "$gj_preds" > "$SCRATCH/j-unguarded.txt"
     if [ -s "$SCRATCH/j-unguarded.txt" ]; then
         gj_n=$(wc -l < "$SCRATCH/j-unguarded.txt" | tr -d ' ')
-        fail "Gate J.c: $gj_label arms a redirect_https hop from a condition that does not name the coverage predicate ($gj_n site(s)); predicate markers found: '${gj_preds:-none}'"
+        fail "Gate J.c: $gj_label arms a redirect_https hop from a condition that neither names the coverage predicate nor tests a flag only the predicate can arm ($gj_n site(s)); predicate markers found: '${gj_preds:-none}'"
         sed 's/^/      UNGUARDED: /' "$SCRATCH/j-unguarded.txt" >&2
     else
         ok "Gate J.c: every redirect_https='1' in $gj_label is armed by the coverage predicate"
     fi
 }
 
+gate_jc_control
 gate_j_one "$GATE_J_92" "the vendored 92 (files/uci-defaults/92-tollgate-admin-setup)" "$SCRATCH/j-fp-92.txt"
 gate_j_one "$GATE_J_99" "the pinned tarball's 99-tollgate-setup (packaging/files/etc/uci-defaults/)" "$SCRATCH/j-fp-99.txt"
 
