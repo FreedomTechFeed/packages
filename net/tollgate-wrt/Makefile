@@ -258,6 +258,7 @@ PKG_NAME:=tollgate-wrt
 #     < 0.6.0_alpha4_pre20 < 0.6.0_alpha4_pre21 < 0.6.0_alpha4_pre22
 #     < 0.6.0_alpha4_pre23 < 0.6.0_alpha4
 #     < 0.6.0_alpha4_pre23 < 0.6.0_rc1_pre24 < 0.6.0_rc1
+#     < 0.6.0_rc1_pre24 < 0.6.0_rc1_pre25 < 0.6.0_rc1
 # PKG_SOURCE_TAG stays v0.6.0-alpha4: the module repo-root VERSION file at
 # PKG_SOURCE_VERSION is unchanged, and a repin that does not move the pin
 # must not move the tag either.
@@ -394,7 +395,26 @@ PKG_NAME:=tollgate-wrt
 #   docs(tests): the cloud-lab runbook is in main — drop the stale hedge (#677)
 #   fix(upstream): reseller renewals self-deadlock — bootstrap candidate check must not run under paymentMu (#629 follow-up) (#678)
 #   test(cloud-lab): #497 crash-window harness — SIGKILL between mint-signed and wallet-save (#676)
-PKG_VERSION:=0.6.0_rc1_pre24
+# ---------------------------------------------------------------------------
+# pre25 moves the pin and does nothing else -- the same shape as every repin before it:
+# the module moved, so PKG_SOURCE_VERSION and PKG_HASH move with it (PKG_HASH is
+# never recomputed without a pin move and never left stale across one), and no
+# other feed-side file changes.
+# The pin is now the merged module main tip cb4db7f, and the repo-root VERSION file
+# inside that tarball is v0.6.0-rc1, so PKG_SOURCE_TAG moves with it
+# (v0.6.0-rc1 -> v0.6.0-rc1) -- Gate B in test-pkg-tarball-parity.sh compares the two
+# and fails the build if they disagree.
+# Delta since 2de7955 (9 commit(s)):
+#   fix(merchant): the business-transaction record — an ambiguous or interrupted payment converges to service or spendable value (#502) (#700)
+#   docs(release): re-pin the internal test baseline — 09ea3af5, the #502 convergence included (#701)
+#   deps: security sweep — clears all 18 dependabot alerts (x/crypto critical chain) (#681)
+#   fix(discovery): recognize both brands' SSIDs so Net4sats can be an upstream — rebase of #618 (#682)
+#   test(vm-campaign): the x86-64 VM acceptance lane on ai-legion — first campaign green against the rc1 artifact (#704)
+#   docs(changelog): fragment for admin-UI URL contract docs (#698 follow-up) (#699)
+#   test(packaging): scope the rebrand gutter's literal ban to code surfaces — prose references are documented and exempt (#692)
+#   feat(config)!: entry_ui decides which UI owns :8080/:443 — the board takes the entry pair, LuCI moves to :8090/:8443 (#709)
+#   chore(packaging)!: pin the portal at the merged entry_ui revision (#714)
+PKG_VERSION:=0.6.0_rc1_pre25
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -466,7 +486,7 @@ PKG_VERSION:=0.6.0_rc1_pre24
 # deliberately left alone: the tarball's own VERSION file is still
 # v0.6.0-alpha4 (Gate B enforces it on every run), and none of the four touches
 # portal content.
-PKG_SOURCE_VERSION:=2de7955ed5856bdd7f66cd43abec0f0d4fc34c00
+PKG_SOURCE_VERSION:=cb4db7f0152f804a3250516c5ec7c05346dfddaa
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -582,7 +602,7 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # recalibrated, and this value comes from a fresh download of the NEW pin, not
 # from the outgoing one.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=afdf4115906576f522c8cafe12699c255a4eb2a6442b918f40b2f90fee4d7bcd
+PKG_HASH:=1ad7890ad0e09fbb844b4789c0fc767dc76d2cf1727827a0eb5f7b665aa53421
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
