@@ -31,6 +31,20 @@ name: Test and Build
 on:
   pull_request:
 
+# Upstream parity: this stanza is verbatim from
+# openwrt/actions-shared-workflows/.github/workflows/multi-arch-test-build.yml.
+# The vendored copy previously dropped it, which had two real costs measured on
+# 2026-10-08: (1) a stale "Test and Build" run on the merged PR branch kept
+# occupying 7 runners for 160 minutes because nothing cancelled it — meanwhile
+# the tag-triggered release-publish run queued 2 of its 16 jobs for 51 minutes
+# at the 20-runner account cap; (2) rapid pushes to a PR each spawned a fresh
+# 8-job matrix instead of superseding the previous one. On PRs
+# (github.event_name == 'pull_request') this cancels the previous run in
+# progress; upstream uses the same condition.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
   pull-requests: write
@@ -40,6 +54,7 @@ jobs:
   build:
     name: Test ${{ matrix.arch }}
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix: >-
