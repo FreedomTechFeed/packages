@@ -13,9 +13,13 @@ name: Publish per-arch tollgate-wrt release assets
 # so the correct binary is fetched for the detected router arch.
 #
 # Two SDK images are built per arch:
-#   - master        -> apk-tools package (.apk), OpenWrt 25+
+#   - openwrt-25.12 -> apk-tools package (.apk), OpenWrt 25.12+
 #   - openwrt-24.10 -> opkg package (.ipk), OpenWrt <=24.x
-# This mirrors how the wizard selects .apk vs .ipk by package manager.
+# This mirrors how the wizard selects .apk vs .ipk by package manager. The apk
+# lane builds against a released branch, not the mutable `master` snapshot:
+# snapshots cannot be safely checksum-verified (PR #46 race) and permanently
+# miss the gh-action-sdk docker cache, forcing the ~25-30 min dependency
+# rebuild on every tag (measured on the pre26 tag, run 37816851786).
 #
 # Build jobs run in parallel and upload their per-arch asset as a workflow
 # artifact; a single publish job (needs: build) downloads them all and uploads

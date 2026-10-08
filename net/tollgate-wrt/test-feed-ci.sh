@@ -25,6 +25,7 @@ set -u
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 WORKFLOW_DIR="$ROOT/.github/workflows"
 PKG_DIR="$ROOT/net/tollgate-wrt"
+REL_ASSETS="$WORKFLOW_DIR/scripts/release-assets.py"
 FAIL=0
 
 fail() {
@@ -78,9 +79,15 @@ for f in "$WORKFLOW_DIR"/*.yml; do
 done
 [ "$NAME_PATTERN_FOUND" = 1 ] || fail "no workflow encodes the tollgate-wrt_<version>_<arch> asset naming pattern"
 
-# --- Gate D: existing arches preserved ---
-# The change must NOT drop the existing mipsel_24kc / mips_24kc / x86_64
-# builds. Assert the matrix override (or default) still covers them.
+# --- Gate D: existing arches preserved -------------------------------------
+# "Preserved" means SHIPPED: every arch the release lane can publish must
+# still be built by the tag-triggered release matrix. The PR lane may park
+# rows (see Gate J), so the workflow text alone is NOT the right place to
+# assert preservation — a commented-out row would satisfy a text grep
+# vacuously. Primary check: parse the release matrix (same parser as
+# Gates F/I). Secondary: the three historically-shipped arches below must
+# still appear in the PR workflow either as an ACTIVE row or as a PARKED
+# comment row (uncomment-to-restore), never vanish entirely.
 for arch in mipsel_24kc mips_24kc x86_64; do
     FOUND=0
     for f in "$WORKFLOW_DIR"/*.yml; do
@@ -91,6 +98,16 @@ for arch in mipsel_24kc mips_24kc x86_64; do
     done
     [ "$FOUND" = 1 ] || fail "existing arch $arch missing from all workflows"
 done
+REL_ARCHES=$(python3 "$REL_ASSETS" matrix 2>/dev/null | python3 -c 'import json,sys; print(" ".join(sorted({r["arch"] for r in json.load(sys.stdin)["include"]})))' 2>/dev/null)
+if [ -n "$REL_ARCHES" ]; then
+    MISS=0
+    for arch in mipsel_24kc mips_24kc x86_64; do
+        case " $REL_ARCHES " in *" $arch "*) ;; *) fail "release lane no longer ships $arch (arch preservation is a RELEASE-lane property)"; MISS=1 ;; esac
+    done
+    [ "$MISS" = 0 ] && ok "release lane still ships every historically-shipped arch ($REL_ARCHES)"
+else
+    fail "could not parse the release matrix to verify arch preservation"
+fi
 
 # --- Gate E: PR CI always builds tollgate-wrt and runtime test is non-blocking ---
 # The PR CI is vendored (not the upstream reusable workflow) so that:
@@ -196,6 +213,97 @@ else
         ok "control: the check refuses a workflow pinned back to the mutable master snapshot branch"
     fi
     rm -f "$_ctl"
+fi
+
+# --- Gate I: the RELEASE lane also pins released SDK branches, never snapshots --
+# (2026-10-08) Gate H guards the PR workflow, but the tag-triggered release
+# matrix (release-assets.py RELEASES) is a SEPARATE table, and its apk lane
+# still built against the mutable `master` snapshot while the PR lane was
+# pinned. Two measured costs on the pre26 tag (run 37816851786): every apk-lane
+# job rebuilt its dependency closure from source because the moved snapshot
+# invalidated the gh-action-sdk docker cache scope (openwrt/sdk-<arch>-master),
+# and the slowest lane spent 2597 s of a 2630 s job inside the SDK step with
+# the tollgate module itself compiling in the final ~60 s. A released branch
+# cannot race its sha256sums (Gate H rationale) and its cache scope stays
+# valid until the branch moves.
+#
+# Like Gate F, this parses the table via release-assets.py, not the file text.
+# The negative control mutates a copy back to `master` and requires the check
+# to refuse it.
+release_sdk_pin_check() { # release_sdk_pin_check <release-assets.py> ; rc 0 = all lanes released
+    python3 - "$1" <<'PY' >/dev/null 2>&1
+import json, re, subprocess, sys
+rows = json.loads(subprocess.run(
+    ["python3", sys.argv[1], "matrix"], capture_output=True, text=True, check=True).stdout)["include"]
+bad = sorted({r["sdk"] for r in rows
+              if not re.match(r"^openwrt-[0-9]+\.[0-9]+$", r["sdk"])})
+sys.exit(1 if bad else 0)
+PY
+}
+REL_ASSETS="$WORKFLOW_DIR/scripts/release-assets.py"
+if [ ! -f "$REL_ASSETS" ]; then
+    fail "the release matrix script is missing: $REL_ASSETS"
+else
+    if release_sdk_pin_check "$REL_ASSETS"; then
+        ok "every release-lane SDK is a released openwrt-<major>.<minor> branch (no snapshot lane)"
+    else
+        fail "a release lane builds against a non-released SDK branch (mutable snapshot: checksum race + permanent cache miss; see Gate H)"
+    fi
+    _ctl=$(mktemp --suffix=.py)
+    sed 's/"openwrt-25\.12", "apk"/"master", "apk"/g' "$REL_ASSETS" > "$_ctl"
+    if release_sdk_pin_check "$_ctl" >/dev/null 2>&1; then
+        fail "control: a release matrix pinned back to 'master' was ACCEPTED (the check is vacuous)"
+    else
+        ok "control: the check refuses a release matrix pinned back to the mutable master snapshot"
+    fi
+    rm -f "$_ctl"
+fi
+
+# --- Gate J: every release-lane arch keeps an active-or-parked PR row --------
+# (2026-10-08) The PR matrix trims compile coverage to the arches on real
+# hardware by PARKING rows (commented out, uncomment-to-restore) instead of
+# deleting them. Two things must hold:
+#   - (this gate) every arch the release lane SHIPS must still appear in the
+#     PR workflow as an ACTIVE row or a PARKED comment row, so the restore
+#     path is visible where you would restore it. Parking may not become
+#     "this arch's restore path silently disappears".
+#   - (Gate D) historically-shipped arches cannot leave the release matrix
+#     at all. Gate D + this gate together close the "park a row and drop the
+#     arch from RELEASES in the same change" hole: D refuses the drop, J
+#     refuses the vanished restore path.
+# Direction is deliberately one-way: the PR workflow also carries
+# aarch64_generic/armsr-armv8, a compile-coverage arch that has NEVER been a
+# release-lane row — requiring bidirectional equality would force deleting
+# its parked row, which is the opposite of the point.
+gate_j() { # gate_j <workflow> <release-assets.py> ; rc 0 = consistent
+    _wf="$1"; _ra="$2"
+    _rel=$(python3 "$_ra" matrix 2>/dev/null | python3 -c 'import json,sys; print(" ".join(sorted({r["arch"] for r in json.load(sys.stdin)["include"]})))' 2>/dev/null)
+    [ -n "$_rel" ] || { echo "cannot parse release matrix"; return 1; }
+    _wfarches=$(grep -oE '"arch": "[a-z0-9_-]+"' "$_wf" | sed 's/.*"arch": "//;s/"//' | sort -u | tr '\n' ' ')
+    _rc=0
+    for _a in $_rel; do
+        case " $_wfarches " in *" $_a "*) ;; *)
+            echo "release arch '$_a' has no active-or-parked row in the PR workflow (restore path not visible)"; _rc=1 ;; esac
+    done
+    return $_rc
+}
+
+if [ ! -f "$PR_BUILD_WF" ]; then
+    fail "the vendored PR build workflow is missing: $PR_BUILD_WF (Gate J cannot run)"
+else
+    if _why=$(gate_j "$PR_BUILD_WF" "$REL_ASSETS"); then
+        ok "every release-lane arch keeps an active-or-parked PR row (parking cannot hide the restore path)"
+    else
+        fail "PR matrix lost the restore path for a shipped arch: $_why"
+    fi
+    _wfctl=$(mktemp)
+    sed '/"arch": "mips_24kc"/d' "$PR_BUILD_WF" > "$_wfctl"
+    if gate_j "$_wfctl" "$REL_ASSETS" >/dev/null 2>&1; then
+        fail "control: a shipped arch whose active-or-parked row was deleted from the PR workflow was ACCEPTED (the check is vacuous)"
+    else
+        ok "control: the check refuses a shipped arch with no active-or-parked PR row"
+    fi
+    rm -f "$_wfctl"
 fi
 
 # --- Gate F: the apk lane that was shipped without a WAN-less bundle ----------
