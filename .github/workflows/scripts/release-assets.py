@@ -26,24 +26,40 @@ import sys
 # (arch, openwrt target, SDK branch, package extension)
 #
 # Two SDK images are built per arch:
-#   master        -> apk-tools package (.apk), OpenWrt 25+
-#   openwrt-24.10 -> opkg package (.ipk), OpenWrt <= 24.x
+#   openwrt-25.12 -> apk-tools package (.apk), OpenWrt 25.12+
+#   openwrt-24.10 -> opkg package (.ipk), OpenWrt <=24.x
 # The wizard selects .apk vs .ipk by the package manager it finds on the router
 # (net4sats-wizard-go arch.go / tollgateArchAssets).
+#
+# The apk lane builds against the RELEASED openwrt-25.12 branch, not the
+# mutable `master` snapshot tree. Same rationale as the PR lane's SDK pin
+# (multi-arch-test-build.yml, measured on PR #46): a snapshot rotates
+# continuously, so (1) a tarball can stop matching the sha256sums fetched
+# seconds earlier, and (2) the gh-action-sdk docker cache (scope
+# openwrt/sdk-<arch>-master) can never hit for long — the moved snapshot
+# forces the SDK image rebuild and the ~25-30 min dependency-closure source
+# rebuild on every tag. A released branch is immutable: sums cannot race and
+# the cache stays valid until the branch itself moves. Measured cost of the
+# snapshot lane on the pre26 tag (run 37816851786, 2026-10-08): every build
+# job rebuilt its closure from source; the slowest lane spent 2597 s of a
+# 2630 s job inside openwrt/gh-action-sdk, with the tollgate module itself
+# compiling in the final ~60 s. This also matches what ships: the routers run
+# 25.12.5 (see OFFLINE_BUNDLES below), the PR lane pins openwrt-25.12, so the
+# release apk lane was the only lane still building against `master`.
 RELEASES = [
-    ("aarch64_cortex-a53", "mediatek-filogic", "master", "apk"),
+    ("aarch64_cortex-a53", "mediatek-filogic", "openwrt-25.12", "apk"),
     ("aarch64_cortex-a53", "mediatek-filogic", "openwrt-24.10", "ipk"),
-    ("aarch64_cortex-a72", "bcm27xx-bcm2711", "master", "apk"),
+    ("aarch64_cortex-a72", "bcm27xx-bcm2711", "openwrt-25.12", "apk"),
     ("aarch64_cortex-a72", "bcm27xx-bcm2711", "openwrt-24.10", "ipk"),
-    ("arm_cortex-a7", "bcm27xx-bcm2709", "master", "apk"),
+    ("arm_cortex-a7", "bcm27xx-bcm2709", "openwrt-25.12", "apk"),
     ("arm_cortex-a7", "bcm27xx-bcm2709", "openwrt-24.10", "ipk"),
-    ("mipsel_24kc", "mt7621", "master", "apk"),
+    ("mipsel_24kc", "mt7621", "openwrt-25.12", "apk"),
     ("mipsel_24kc", "mt7621", "openwrt-24.10", "ipk"),
-    ("mips_24kc", "ath79-generic", "master", "apk"),
+    ("mips_24kc", "ath79-generic", "openwrt-25.12", "apk"),
     ("mips_24kc", "ath79-generic", "openwrt-24.10", "ipk"),
-    ("mips64_octeonplus", "octeon-generic", "master", "apk"),
+    ("mips64_octeonplus", "octeon-generic", "openwrt-25.12", "apk"),
     ("mips64_octeonplus", "octeon-generic", "openwrt-24.10", "ipk"),
-    ("x86_64", "x86-64", "master", "apk"),
+    ("x86_64", "x86-64", "openwrt-25.12", "apk"),
     ("x86_64", "x86-64", "openwrt-24.10", "ipk"),
 ]
 

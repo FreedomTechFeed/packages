@@ -211,10 +211,14 @@ requires the check to refuse it — so the assertion cannot pass vacuously.
 Triggers on `v*` tags (and `workflow_dispatch`). For each arch it builds
 tollgate-wrt with two SDK images:
 
-- `master` → apk-tools package (`.apk`), OpenWrt 25+
+- `openwrt-25.12` → apk-tools package (`.apk`), OpenWrt 25.12+
 - `openwrt-24.10` → opkg package (`.ipk`), OpenWrt <=24.x
 
-This mirrors how the wizard selects `.apk` vs `.ipk` by package manager. Build
+This mirrors how the wizard selects `.apk` vs `.ipk` by package manager. The
+apk lane builds against the **released** `openwrt-25.12` branch, not the
+mutable `master` snapshot, for the same reason the PR lane pins its SDK
+(immutable sums + a cache scope that survives between tags; see Gate H/I in
+`net/tollgate-wrt/test-feed-ci.sh`). Build
 jobs run in parallel and upload their per-arch asset as a workflow artifact; a
 single `publish` job downloads them all and uploads to the release. This
 avoids the race of several matrix jobs calling `softprops/action-gh-release`
