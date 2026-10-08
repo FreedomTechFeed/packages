@@ -79,34 +79,54 @@ for f in "$WORKFLOW_DIR"/*.yml; do
 done
 [ "$NAME_PATTERN_FOUND" = 1 ] || fail "no workflow encodes the tollgate-wrt_<version>_<arch> asset naming pattern"
 
-# --- Gate D: existing arches preserved -------------------------------------
-# "Preserved" means SHIPPED: every arch the release lane can publish must
-# still be built by the tag-triggered release matrix. The PR lane may park
-# rows (see Gate J), so the workflow text alone is NOT the right place to
-# assert preservation — a commented-out row would satisfy a text grep
-# vacuously. Primary check: parse the release matrix (same parser as
-# Gates F/I). Secondary: the three historically-shipped arches below must
-# still appear in the PR workflow either as an ACTIVE row or as a PARKED
-# comment row (uncomment-to-restore), never vanish entirely.
-for arch in mipsel_24kc mips_24kc x86_64; do
-    FOUND=0
-    for f in "$WORKFLOW_DIR"/*.yml; do
-        if grep -q "$arch" "$f"; then
-            FOUND=1
-            ok "existing arch $arch preserved in $(basename "$f")"
-        fi
-    done
-    [ "$FOUND" = 1 ] || fail "existing arch $arch missing from all workflows"
-done
-REL_ARCHES=$(python3 "$REL_ASSETS" matrix 2>/dev/null | python3 -c 'import json,sys; print(" ".join(sorted({r["arch"] for r in json.load(sys.stdin)["include"]})))' 2>/dev/null)
-if [ -n "$REL_ARCHES" ]; then
-    MISS=0
-    for arch in mipsel_24kc mips_24kc x86_64; do
-        case " $REL_ARCHES " in *" $arch "*) ;; *) fail "release lane no longer ships $arch (arch preservation is a RELEASE-lane property)"; MISS=1 ;; esac
-    done
-    [ "$MISS" = 0 ] && ok "release lane still ships every historically-shipped arch ($REL_ARCHES)"
+# --- Gate D: the club device set stays SHIPPABLE ----------------------------
+# (2026-10-08, operator product call) The release lane ships exactly the
+# arches the club runs: GL-MT3000 and GL-MT6000 (both aarch64_cortex-a53 /
+# mediatek-filogic) and the GL.iNet AR300M family (mips_24kc /
+# ath79-generic). Every other row is PARKED, not deleted (see Gate K).
+#
+# This gate asserts the load-bearing half of that call: each club device
+# arch must keep BOTH its per-arch .apk release row AND its WAN-less
+# offline bundle -- a bundle whose matching package never publishes
+# advertises an install path that 404s. The negative control deletes the
+# a53 .apk row from a copy and requires the check to refuse it.
+club_ship_check() { # club_ship_check <release-assets.py> ; rc 0 = club set shippable
+    python3 - "$1" <<'PY'
+import json, subprocess, sys
+ra = sys.argv[1]
+rows = json.loads(subprocess.run([sys.executable, ra, "matrix"],
+                                 capture_output=True, text=True, check=True).stdout)["include"]
+bundles = json.loads(subprocess.run([sys.executable, ra, "offline-matrix"],
+                                    capture_output=True, text=True, check=True).stdout)["include"]
+CLUB = [("aarch64_cortex-a53", "mediatek-filogic", "GL-MT3000/GL-MT6000"),
+        ("mips_24kc", "ath79-generic", "GL.iNet AR300M")]
+rc = 0
+for arch, target, device in CLUB:
+    if not [r for r in rows if r["arch"] == arch and r["target"] == target and r["ext"] == "apk"]:
+        print(f"club arch {arch}/{target} ({device}) has no .apk release row -- cannot install")
+        rc = 1
+    if not any(b["arch"] == arch and b["target"] == target for b in bundles):
+        print(f"club arch {arch}/{target} ({device}) has no WAN-less offline bundle")
+        rc = 1
+sys.exit(rc)
+PY
+}
+if [ ! -f "$REL_ASSETS" ]; then
+    fail "the release matrix script is missing: $REL_ASSETS (Gate D cannot run)"
 else
-    fail "could not parse the release matrix to verify arch preservation"
+    if _why=$(club_ship_check "$REL_ASSETS"); then
+        ok "the club device set (a53 = MT3000/MT6000, mips_24kc = AR300M) keeps its .apk row and offline bundle"
+    else
+        fail "the club device set is no longer shippable: $_why"
+    fi
+    _ractl=$(mktemp --suffix=.py)
+    sed '/"aarch64_cortex-a53", "mediatek-filogic", "openwrt-25\.12", "apk"/d' "$REL_ASSETS" > "$_ractl"
+    if club_ship_check "$_ractl" >/dev/null 2>&1; then
+        fail "control: the a53 .apk release row was removed and ACCEPTED (the check is vacuous)"
+    else
+        ok "control: the check refuses a club device arch whose .apk release row was removed"
+    fi
+    rm -f "$_ractl"
 fi
 
 # --- Gate E: PR CI always builds tollgate-wrt and runtime test is non-blocking ---
@@ -304,6 +324,69 @@ else
         ok "control: the check refuses a shipped arch with no active-or-parked PR row"
     fi
     rm -f "$_wfctl"
+fi
+
+# --- Gate K: parked release rows are still RESTORABLE rows --------------------
+# (2026-10-08) The release matrix parks rows the same way the PR matrix does:
+# commented out inside the list, exact row text preserved, uncomment to
+# restore. "Comment out, don't delete" is only true if the parked text is
+# still a well-formed row -- a mangled comment line looks identical to a
+# working park until someone tries to restore it. This gate parses every
+# commented row line out of release-assets.py and requires it to
+# ast.literal_eval into a 4-tuple, i.e. literally paste-back-able. The
+# negative control corrupts a parked row's quoting and must be refused.
+parked_rows_check() { # parked_rows_check <release-assets.py> ; rc 0 = all parked rows restorable
+    python3 - "$1" <<'PY'
+import ast, re, sys
+src = open(sys.argv[1]).read()
+# A parked row: a comment line whose body is a parenthesised literal
+# (quoted fields only -- prose comments such as "(arch, target, ...)" are
+# skipped because they carry no quotes).
+cand = [m.group(1) for m in re.finditer(r'^\s*#\s*(\(.*\))\s*,?\s*$', src, re.M)
+        if m.group(1).count('"') >= 4]
+if not cand:
+    print("no parked release rows found -- parking must keep rows as comments, not delete them")
+    sys.exit(1)
+rc = 0
+for text in cand:
+    try:
+        t = ast.literal_eval(text)
+    except Exception as exc:
+        print(f"parked row is not restorable Python: {text}  ({exc})")
+        rc = 1
+        continue
+    if not (isinstance(t, tuple) and len(t) == 4):
+        print(f"parked row is not a 4-tuple: {text}")
+        rc = 1
+sys.exit(rc)
+PY
+}
+if [ ! -f "$REL_ASSETS" ]; then
+    fail "the release matrix script is missing: $REL_ASSETS (Gate K cannot run)"
+else
+    if _why=$(parked_rows_check "$REL_ASSETS"); then
+        ok "every parked release row is still a literal, paste-back-able 4-tuple"
+    else
+        fail "a parked release row cannot be restored: $_why"
+    fi
+    # Control A: parking degraded into DELETION (no parked rows at all) must be refused.
+    _kctl=$(mktemp --suffix=.py)
+    sed '/^    # ("/d' "$REL_ASSETS" > "$_kctl"
+    if parked_rows_check "$_kctl" >/dev/null 2>&1; then
+        fail "control: a matrix whose parked rows were DELETED was ACCEPTED (the check is vacuous)"
+    else
+        ok "control: the check refuses a matrix whose parked rows were deleted"
+    fi
+    rm -f "$_kctl"
+    # Control B: a corrupted parked row (no longer paste-back-able) must be refused.
+    _kctl=$(mktemp --suffix=.py)
+    sed '/^    # ("x86_64", "x86-64", "openwrt-25\.12", "apk"),$/s/"apk"),/"apk),/' "$REL_ASSETS" > "$_kctl"
+    if parked_rows_check "$_kctl" >/dev/null 2>&1; then
+        fail "control: a corrupted (unrestorable) parked row was ACCEPTED (the check is vacuous)"
+    else
+        ok "control: the check refuses a corrupted parked row"
+    fi
+    rm -f "$_kctl"
 fi
 
 # --- Gate F: the apk lane that was shipped without a WAN-less bundle ----------
