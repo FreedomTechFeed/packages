@@ -46,21 +46,36 @@ import sys
 # compiling in the final ~60 s. This also matches what ships: the routers run
 # 25.12.5 (see OFFLINE_BUNDLES below), the PR lane pins openwrt-25.12, so the
 # release apk lane was the only lane still building against `master`.
+# (arch, 
+#  2026-10-08 (operator product call): the release lane ships exactly the
+# arches the club runs -- GL-MT3000 + GL-MT6000 (aarch64_cortex-a53 /
+# mediatek-filogic) and the GL.iNet AR300M family (mips_24kc /
+# ath79-generic). Every other row is PARKED, not deleted: uncomment a row
+# to restore it. Gates D and K in net/tollgate-wrt/test-feed-ci.sh keep
+# this honest (D: the club set keeps its .apk row + its offline bundle;
+# K: every parked row is still a paste-back-able 4-tuple). Keep the parked
+# block INSIDE the list so restoring a row is a one-line edit.
+#
+# Before restoring an arch here, also check the wizard's device list
+# (net4sats-wizard-go arch.go) -- a shipped asset with no wizard entry is
+# invisible, and a wizard entry with no asset 404s on install.
 RELEASES = [
+    # --- club devices: MT3000 + MT6000 (a53), AR300M family (mips_24kc) ---
     ("aarch64_cortex-a53", "mediatek-filogic", "openwrt-25.12", "apk"),
     ("aarch64_cortex-a53", "mediatek-filogic", "openwrt-24.10", "ipk"),
-    ("aarch64_cortex-a72", "bcm27xx-bcm2711", "openwrt-25.12", "apk"),
-    ("aarch64_cortex-a72", "bcm27xx-bcm2711", "openwrt-24.10", "ipk"),
-    ("arm_cortex-a7", "bcm27xx-bcm2709", "openwrt-25.12", "apk"),
-    ("arm_cortex-a7", "bcm27xx-bcm2709", "openwrt-24.10", "ipk"),
-    ("mipsel_24kc", "mt7621", "openwrt-25.12", "apk"),
-    ("mipsel_24kc", "mt7621", "openwrt-24.10", "ipk"),
     ("mips_24kc", "ath79-generic", "openwrt-25.12", "apk"),
     ("mips_24kc", "ath79-generic", "openwrt-24.10", "ipk"),
-    ("mips64_octeonplus", "octeon-generic", "openwrt-25.12", "apk"),
-    ("mips64_octeonplus", "octeon-generic", "openwrt-24.10", "ipk"),
-    ("x86_64", "x86-64", "openwrt-25.12", "apk"),
-    ("x86_64", "x86-64", "openwrt-24.10", "ipk"),
+    # --- PARKED (uncomment to restore; no club device needs these) -------
+    # ("aarch64_cortex-a72", "bcm27xx-bcm2711", "openwrt-25.12", "apk"),
+    # ("aarch64_cortex-a72", "bcm27xx-bcm2711", "openwrt-24.10", "ipk"),
+    # ("arm_cortex-a7", "bcm27xx-bcm2709", "openwrt-25.12", "apk"),
+    # ("arm_cortex-a7", "bcm27xx-bcm2709", "openwrt-24.10", "ipk"),
+    # ("mipsel_24kc", "mt7621", "openwrt-25.12", "apk"),
+    # ("mipsel_24kc", "mt7621", "openwrt-24.10", "ipk"),
+    # ("mips64_octeonplus", "octeon-generic", "openwrt-25.12", "apk"),
+    # ("mips64_octeonplus", "octeon-generic", "openwrt-24.10", "ipk"),
+    # ("x86_64", "x86-64", "openwrt-25.12", "apk"),
+    # ("x86_64", "x86-64", "openwrt-24.10", "ipk"),
 ]
 
 # Offline dependency bundles (WAN-less install), one per arch that ships the
