@@ -259,6 +259,53 @@ else
     rm -f "$_ctl"
 fi
 
+# --- Gate J: every release-lane arch keeps an active-or-parked PR row --------
+# (2026-10-08) The PR matrix trims compile coverage to the arches on real
+# hardware by PARKING rows (commented out, uncomment-to-restore) instead of
+# deleting them. Two things must hold:
+#   - (this gate) every arch the release lane SHIPS must still appear in the
+#     PR workflow as an ACTIVE row or a PARKED comment row, so the restore
+#     path is visible where you would restore it. Parking may not become
+#     "this arch's restore path silently disappears".
+#   - (Gate D) historically-shipped arches cannot leave the release matrix
+#     at all. Gate D + this gate together close the "park a row and drop the
+#     arch from RELEASES in the same change" hole: D refuses the drop, J
+#     refuses the vanished restore path.
+# Direction is deliberately one-way: the PR workflow also carries
+# aarch64_generic/armsr-armv8, a compile-coverage arch that has NEVER been a
+# release-lane row — requiring bidirectional equality would force deleting
+# its parked row, which is the opposite of the point.
+gate_j() { # gate_j <workflow> <release-assets.py> ; rc 0 = consistent
+    _wf="$1"; _ra="$2"
+    _rel=$(python3 "$_ra" matrix 2>/dev/null | python3 -c 'import json,sys; print(" ".join(sorted({r["arch"] for r in json.load(sys.stdin)["include"]})))' 2>/dev/null)
+    [ -n "$_rel" ] || { echo "cannot parse release matrix"; return 1; }
+    _wfarches=$(grep -oE '"arch": "[a-z0-9_-]+"' "$_wf" | sed 's/.*"arch": "//;s/"//' | sort -u | tr '\n' ' ')
+    _rc=0
+    for _a in $_rel; do
+        case " $_wfarches " in *" $_a "*) ;; *)
+            echo "release arch '$_a' has no active-or-parked row in the PR workflow (restore path not visible)"; _rc=1 ;; esac
+    done
+    return $_rc
+}
+
+if [ ! -f "$PR_BUILD_WF" ]; then
+    fail "the vendored PR build workflow is missing: $PR_BUILD_WF (Gate J cannot run)"
+else
+    if _why=$(gate_j "$PR_BUILD_WF" "$REL_ASSETS"); then
+        ok "every release-lane arch keeps an active-or-parked PR row (parking cannot hide the restore path)"
+    else
+        fail "PR matrix lost the restore path for a shipped arch: $_why"
+    fi
+    _wfctl=$(mktemp)
+    sed '/"arch": "mips_24kc"/d' "$PR_BUILD_WF" > "$_wfctl"
+    if gate_j "$_wfctl" "$REL_ASSETS" >/dev/null 2>&1; then
+        fail "control: a shipped arch whose active-or-parked row was deleted from the PR workflow was ACCEPTED (the check is vacuous)"
+    else
+        ok "control: the check refuses a shipped arch with no active-or-parked PR row"
+    fi
+    rm -f "$_wfctl"
+fi
+
 # --- Gate F: the apk lane that was shipped without a WAN-less bundle ----------
 # (2026-10-01) The offline bundle is what lets a FRESH, WAN-less flash install
 # tollgate-wrt. The apk lane publishes mips_24kc (ath79-generic) as a real

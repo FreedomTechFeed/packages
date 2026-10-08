@@ -57,17 +57,28 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
+      # ------------------------------------------------------------------
+      # PARKED rows — PR-lane compile coverage, trimmed 2026-10-08 (PR #54).
+      # Product decision (operator): a PR push should compile the arches we
+      # actually run on hardware, not all 8. These rows are NOT deleted:
+      # uncomment a row (and re-add its trailing comma as needed) to restore
+      # it. Full per-arch coverage for every shipped arch is unchanged on
+      # the tag-triggered release lane (release-assets.py RELEASES), and
+      # net/tollgate-wrt/test-feed-ci.sh Gate J enforces that a parked arch
+      # is always still shipped by the release lane -- parking can never
+      # become "this arch silently vanishes".
+      #   {"arch": "aarch64_cortex-a72", "target": "bcm27xx-bcm2711", "runtime_test": true},
+      #   {"arch": "aarch64_generic", "target": "armsr-armv8", "runtime_test": true},
+      #   {"arch": "arm_cortex-a7", "target": "bcm27xx-bcm2709", "runtime_test": true},
+      #   {"arch": "mipsel_24kc", "target": "mt7621", "runtime_test": false},
+      #   {"arch": "mips64_octeonplus", "target": "octeon-generic", "runtime_test": true},
+      # ------------------------------------------------------------------
       matrix: >-
         ${{ fromJSON('{"include": [
           {"arch": "aarch64_cortex-a53", "target": "mediatek-filogic", "runtime_test": true},
-          {"arch": "aarch64_cortex-a72", "target": "bcm27xx-bcm2711", "runtime_test": true},
-          {"arch": "aarch64_generic", "target": "armsr-armv8", "runtime_test": true},
-          {"arch": "arm_cortex-a7", "target": "bcm27xx-bcm2709", "runtime_test": true},
           {"arch": "mips_24kc", "target": "ath79-generic", "runtime_test": true},
-          {"arch": "mipsel_24kc", "target": "mt7621", "runtime_test": false},
-          {"arch": "mips64_octeonplus", "target": "octeon-generic", "runtime_test": true},
           {"arch": "x86_64", "target": "x86-64", "runtime_test": true}
-        ]}') }}
+        ]}')}}
 
     steps:
       - name: Remove unused Android SDK, .NET, Swift, GHC
