@@ -25,6 +25,7 @@ set -u
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 WORKFLOW_DIR="$ROOT/.github/workflows"
 PKG_DIR="$ROOT/net/tollgate-wrt"
+REL_ASSETS="$WORKFLOW_DIR/scripts/release-assets.py"
 FAIL=0
 
 fail() {
@@ -78,9 +79,15 @@ for f in "$WORKFLOW_DIR"/*.yml; do
 done
 [ "$NAME_PATTERN_FOUND" = 1 ] || fail "no workflow encodes the tollgate-wrt_<version>_<arch> asset naming pattern"
 
-# --- Gate D: existing arches preserved ---
-# The change must NOT drop the existing mipsel_24kc / mips_24kc / x86_64
-# builds. Assert the matrix override (or default) still covers them.
+# --- Gate D: existing arches preserved -------------------------------------
+# "Preserved" means SHIPPED: every arch the release lane can publish must
+# still be built by the tag-triggered release matrix. The PR lane may park
+# rows (see Gate J), so the workflow text alone is NOT the right place to
+# assert preservation — a commented-out row would satisfy a text grep
+# vacuously. Primary check: parse the release matrix (same parser as
+# Gates F/I). Secondary: the three historically-shipped arches below must
+# still appear in the PR workflow either as an ACTIVE row or as a PARKED
+# comment row (uncomment-to-restore), never vanish entirely.
 for arch in mipsel_24kc mips_24kc x86_64; do
     FOUND=0
     for f in "$WORKFLOW_DIR"/*.yml; do
@@ -91,6 +98,16 @@ for arch in mipsel_24kc mips_24kc x86_64; do
     done
     [ "$FOUND" = 1 ] || fail "existing arch $arch missing from all workflows"
 done
+REL_ARCHES=$(python3 "$REL_ASSETS" matrix 2>/dev/null | python3 -c 'import json,sys; print(" ".join(sorted({r["arch"] for r in json.load(sys.stdin)["include"]})))' 2>/dev/null)
+if [ -n "$REL_ARCHES" ]; then
+    MISS=0
+    for arch in mipsel_24kc mips_24kc x86_64; do
+        case " $REL_ARCHES " in *" $arch "*) ;; *) fail "release lane no longer ships $arch (arch preservation is a RELEASE-lane property)"; MISS=1 ;; esac
+    done
+    [ "$MISS" = 0 ] && ok "release lane still ships every historically-shipped arch ($REL_ARCHES)"
+else
+    fail "could not parse the release matrix to verify arch preservation"
+fi
 
 # --- Gate E: PR CI always builds tollgate-wrt and runtime test is non-blocking ---
 # The PR CI is vendored (not the upstream reusable workflow) so that:
@@ -223,7 +240,7 @@ bad = sorted({r["sdk"] for r in rows
 sys.exit(1 if bad else 0)
 PY
 }
-REL_ASSETS="$ROOT/.github/workflows/scripts/release-assets.py"
+REL_ASSETS="$WORKFLOW_DIR/scripts/release-assets.py"
 if [ ! -f "$REL_ASSETS" ]; then
     fail "the release matrix script is missing: $REL_ASSETS"
 else
