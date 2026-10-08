@@ -198,6 +198,50 @@ else
     rm -f "$_ctl"
 fi
 
+# --- Gate I: the RELEASE lane also pins released SDK branches, never snapshots --
+# (2026-10-08) Gate H guards the PR workflow, but the tag-triggered release
+# matrix (release-assets.py RELEASES) is a SEPARATE table, and its apk lane
+# still built against the mutable `master` snapshot while the PR lane was
+# pinned. Two measured costs on the pre26 tag (run 37816851786): every apk-lane
+# job rebuilt its dependency closure from source because the moved snapshot
+# invalidated the gh-action-sdk docker cache scope (openwrt/sdk-<arch>-master),
+# and the slowest lane spent 2597 s of a 2630 s job inside the SDK step with
+# the tollgate module itself compiling in the final ~60 s. A released branch
+# cannot race its sha256sums (Gate H rationale) and its cache scope stays
+# valid until the branch moves.
+#
+# Like Gate F, this parses the table via release-assets.py, not the file text.
+# The negative control mutates a copy back to `master` and requires the check
+# to refuse it.
+release_sdk_pin_check() { # release_sdk_pin_check <release-assets.py> ; rc 0 = all lanes released
+    python3 - "$1" <<'PY' >/dev/null 2>&1
+import json, re, subprocess, sys
+rows = json.loads(subprocess.run(
+    ["python3", sys.argv[1], "matrix"], capture_output=True, text=True, check=True).stdout)["include"]
+bad = sorted({r["sdk"] for r in rows
+              if not re.match(r"^openwrt-[0-9]+\.[0-9]+$", r["sdk"])})
+sys.exit(1 if bad else 0)
+PY
+}
+REL_ASSETS="$ROOT/.github/workflows/scripts/release-assets.py"
+if [ ! -f "$REL_ASSETS" ]; then
+    fail "the release matrix script is missing: $REL_ASSETS"
+else
+    if release_sdk_pin_check "$REL_ASSETS"; then
+        ok "every release-lane SDK is a released openwrt-<major>.<minor> branch (no snapshot lane)"
+    else
+        fail "a release lane builds against a non-released SDK branch (mutable snapshot: checksum race + permanent cache miss; see Gate H)"
+    fi
+    _ctl=$(mktemp --suffix=.py)
+    sed 's/"openwrt-25\.12", "apk"/"master", "apk"/g' "$REL_ASSETS" > "$_ctl"
+    if release_sdk_pin_check "$_ctl" >/dev/null 2>&1; then
+        fail "control: a release matrix pinned back to 'master' was ACCEPTED (the check is vacuous)"
+    else
+        ok "control: the check refuses a release matrix pinned back to the mutable master snapshot"
+    fi
+    rm -f "$_ctl"
+fi
+
 # --- Gate F: the apk lane that was shipped without a WAN-less bundle ----------
 # (2026-10-01) The offline bundle is what lets a FRESH, WAN-less flash install
 # tollgate-wrt. The apk lane publishes mips_24kc (ath79-generic) as a real
