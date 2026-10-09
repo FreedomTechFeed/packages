@@ -1,0 +1,74 @@
+name: Feed gate harness
+
+# The house gate harness must run on every pull request.
+#
+# net/tollgate-wrt/test-devendored.sh (which drives net/tollgate-wrt/test-feed-ci.sh
+# as its Gate E) audits invariants this feed has already paid for in production:
+#
+#   * the build-in-CI rule (#335): a hand-committed bundle shipped the pre10 admin
+#     regression, so nothing under files/ may be a build output;
+#   * the portal pin must be an immutable 40-char SHA in vendor.lock.json;
+#   * the module-owned welcome.html that module #517 deleted must stay deleted
+#     (neither the dead $(PKG_TARBALL_DIR) install line nor a re-vendored copy);
+#   * the CI wiring that rebuilds the bundle must stay present in .github AND in
+#     the .ngit act lane;
+#   * the vendored-PR-CI contract (always build tollgate-wrt; the runtime test and
+#     its container build stay non-blocking) and the immutable released SDK branch
+#     that removes the snapshots checksum race measured on PR #46;
+#   * the mips_24kc WAN-less bundle row, and the parked-arch matrix rows.
+#
+# Until this file existed NONE of that was wired into any workflow. The harness was
+# invoked only by itself and by hand, so a PR could be fully green in CI while a
+# house invariant was violated -- the AR300M park-rows change (#55/#56) was only
+# checked because a human ran the script locally.
+#
+# Deliberate choices, so a later reader does not "fix" them:
+#
+#   * A SEPARATE workflow, not another job appended to release-tooling.yml. That
+#     file is path-filtered to the release tooling, and this harness must not
+#     inherit a filter that lets a violating PR skip it.
+#
+#   * NO `paths:` filter, on purpose. The harness reads .github/workflows/*.yml,
+#     .ngit/act/workflows/*.yml, net/tollgate-wrt/{Makefile,vendor.lock.json,
+#     scripts/}, the git index under net/tollgate-wrt/files/, and
+#     .github/workflows/scripts/release-assets.py. Any enumeration of those would
+#     be brittle, and the first gap in it re-opens exactly the hole this closes.
+#     The whole run is seconds long, so always running it is cheaper than keeping
+#     a filter honest.
+#
+#   * git + python3 ONLY. No SDK, no Docker, no QEMU, no package build: the harness
+#     is shell plus `git ls-files` plus `python3` JSON/table parsing, and it is the
+#     SAME script the manager runs locally -- there is no CI-only copy of the rules.
+#
+#   * NO `continue-on-error` anywhere. A gate that cannot fail the check is not a
+#     gate.
+#
+#   * `push: master` is included so the merge itself produces an authoritative run.
+#     A workflow added by a PR runs from the PR head for `pull_request` events, but
+#     the post-merge run is the first one nothing about the PR under test can
+#     influence, and it keeps the invariant checked against master going forward.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feed-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  house-gates:
+    name: house gate harness (test-devendored.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run the house gate harness (test-devendored.sh -> test-feed-ci.sh)
+        run: sh net/tollgate-wrt/test-devendored.sh
