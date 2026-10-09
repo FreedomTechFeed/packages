@@ -673,18 +673,19 @@ GO_PKG_LDFLAGS_X:= \
 include $(INCLUDE_DIR)/package.mk
 include ../../lang/golang/golang-package.mk
 
-# ca-bundle is a RUNTIME dependency, the same class of defect DEPENDS exists to
-# prevent, found by installing this package by hand on a GL-MT3000 (OpenWrt
-# 25.12.5): wget AND apk update both died with "SSL verify error: unknown
-# error" because the image carried no CA store, so no TLS connection could be
-# verified at all. The module's job is money -- it talks to Cashu mints and
-# Lightning over TLS, and the Go binary uses the system root pool with no
-# InsecureSkipVerify and no bundled pool -- so without a CA bundle every mint and
-# Lightning call fails verification, and a gateway that cannot verify TLS cannot
-# take a payment. The installer used to paper over this by fixing the box first;
-# installing the package alone has to work, so the dependency is declared.
-# Mirrored in the module repo's own recipe (packaging/Makefile), whose
-# tests/packaging/apk-install-resolution_test.sh asserts the declaration.
+# +ca-bundle is a RUNTIME dependency (TLS trust), not a build dependency: the
+# gateway talks to Cashu mints and Lightning over TLS using the system root pool
+# only, so an image with no CA store cannot verify a payment. The installer used
+# to paper over that by fixing the box first; installing the package alone has to
+# work, so the dependency is declared. (The failure that surfaced it is in this
+# commit's message, not here.)
+#   ca-bundle is Architecture: all and `Provides: ca-certs`, and is present on
+#   BOTH lanes -- 24.10 opkg index (ca-bundle 20260816-r1, aarch64_cortex-a53 and
+#   mips_24kc) and the 25.12 apk index -- so the solver resolves it either way.
+#   Naming ca-certificates instead would pin a single provider of ca-certs.
+# Mirrored by the module repo's own recipe (packaging/Makefile with
+# tests/packaging/apk-install-resolution_test.sh) in
+# OpenTollGate/tollgate-module-basic-go#828; that half is NOT in this diff.
 define Package/tollgate-wrt
 	SECTION:=net
 	CATEGORY:=Network
