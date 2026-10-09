@@ -35,6 +35,25 @@ The feed ships exactly the arches the club runs (operator call, 2026-10-08):
 Both are published in **apk** (OpenWrt 25.12) and **ipk** (24.10) form, and both
 have a WAN-less offline bundle.
 
+### GL.iNet AR300M variants
+
+All four AR300M variants use package arch `mips_24kc`, but the flash layout
+determines the OpenWrt target:
+
+| variant | OpenWrt target |
+|---------|----------------|
+| `glinet_gl-ar300m-lite` | `ath79/generic` |
+| `glinet_gl-ar300m16` | `ath79/generic` |
+| `glinet_gl-ar300m-nor` | `ath79/nand` |
+| `glinet_gl-ar300m-nand` | `ath79/nand` |
+
+These are alternatives, not four simultaneously shippable rows: the shared
+arch would make the per-arch asset name collide. To identify a club unit,
+read `/tmp/sysinfo/board_name` on the router; `ubus call system board` also
+prints the model. If the club set moves to NAND, repoint Gate D's hardcoded
+`CLUB` list in `net/tollgate-wrt/test-feed-ci.sh` and the matching
+`OFFLINE_BUNDLES` row together, or the gates will assert the wrong target.
+
 ### Parked arches
 
 `aarch64_cortex-a72`, `arm_cortex-a7`, `mipsel_24kc`, `mips64_octeonplus` and
