@@ -673,13 +673,25 @@ GO_PKG_LDFLAGS_X:= \
 include $(INCLUDE_DIR)/package.mk
 include ../../lang/golang/golang-package.mk
 
+# ca-bundle is a RUNTIME dependency, the same class of defect DEPENDS exists to
+# prevent, found by installing this package by hand on a GL-MT3000 (OpenWrt
+# 25.12.5): wget AND apk update both died with "SSL verify error: unknown
+# error" because the image carried no CA store, so no TLS connection could be
+# verified at all. The module's job is money -- it talks to Cashu mints and
+# Lightning over TLS, and the Go binary uses the system root pool with no
+# InsecureSkipVerify and no bundled pool -- so without a CA bundle every mint and
+# Lightning call fails verification, and a gateway that cannot verify TLS cannot
+# take a payment. The installer used to paper over this by fixing the box first;
+# installing the package alone has to work, so the dependency is declared.
+# Mirrored in the module repo's own recipe (packaging/Makefile), whose
+# tests/packaging/apk-install-resolution_test.sh asserts the declaration.
 define Package/tollgate-wrt
 	SECTION:=net
 	CATEGORY:=Network
 	SUBMENU:=Captive Portals
 	TITLE:=TollGate - Cashu-powered WiFi Payment Gateway
 	URL:=https://tollgate.me
-	DEPENDS:=+nodogsplash +jq $(GO_ARCH_DEPENDS)
+	DEPENDS:=+nodogsplash +jq +ca-bundle $(GO_ARCH_DEPENDS)
 endef
 
 define Package/tollgate-wrt/description
