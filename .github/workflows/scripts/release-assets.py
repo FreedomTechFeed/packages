@@ -50,7 +50,8 @@ import sys
 #  2026-10-08 (operator product call): the release lane ships exactly the
 # arches the club runs -- GL-MT3000 + GL-MT6000 (aarch64_cortex-a53 /
 # mediatek-filogic) and the GL.iNet AR300M family (mips_24kc /
-# ath79-generic). Every other row is PARKED, not deleted: uncomment a row
+# ath79-generic for -lite/-16, or ath79-nand for -nor/-nand). Every other
+# row is PARKED, not deleted: uncomment a row
 # to restore it. Gates D and K in net/tollgate-wrt/test-feed-ci.sh keep
 # this honest (D: the club set keeps its .apk row + its offline bundle;
 # K: every parked row is still a paste-back-able 4-tuple). Keep the parked
@@ -76,6 +77,11 @@ RELEASES = [
     # ("mips64_octeonplus", "octeon-generic", "openwrt-24.10", "ipk"),
     # ("x86_64", "x86-64", "openwrt-25.12", "apk"),
     # ("x86_64", "x86-64", "openwrt-24.10", "ipk"),
+    # AR300M alternatives, not additions: -lite/-16 use ath79/generic;
+    # -nor/-nand use ath79/nand. All four share mips_24kc, so both targets
+    # cannot be live at once: tollgate-wrt_<version>_mips_24kc.<ext> would collide.
+    # ("mips_24kc", "ath79-nand", "openwrt-25.12", "apk"),
+    # ("mips_24kc", "ath79-nand", "openwrt-24.10", "ipk"),
 ]
 
 # Offline dependency bundles (WAN-less install), one per arch that ships the
@@ -103,10 +109,15 @@ OFFLINE_BUNDLES = [
     #
     # `profile` is glinet_gl-ar300m-lite -- the smallest AR300M profile
     # (NOR/Lite, IMAGE_SIZE 16000k). Its device_packages is `kmod-usb2` alone;
-    # glinet_gl-ar300m16 is identical, and the NAND variant is not in the ath79
-    # package lane's profile set. Assuming the smallest profile bundles
+    # glinet_gl-ar300m16 is identical, and the NAND variants (-nor/-nand) live
+    # in the ath79/nand target's profile set, not this ath79-generic lane's
+    # (see the NAND note below). Assuming the smallest profile bundles
     # strictly MORE, which is the safe direction per the note above (the
     # bundle's packages are additive; an already-present package is skipped).
+    # If the club unit is a NAND variant, repoint this bundle together with the
+    # club release rows: target becomes ath79-nand and profile becomes a NAND
+    # profile such as glinet_gl-ar300m-nor. The closure is resolved against the
+    # target's indexes, so an ath79-generic bundle is not interchangeable.
     ("mips_24kc", "ath79-generic", "25.12.5", "glinet_gl-ar300m-lite", "apk"),
 ]
 

@@ -72,6 +72,7 @@ jobs:
       #   {"arch": "arm_cortex-a7", "target": "bcm27xx-bcm2709", "runtime_test": true},
       #   {"arch": "mipsel_24kc", "target": "mt7621", "runtime_test": false},
       #   {"arch": "mips64_octeonplus", "target": "octeon-generic", "runtime_test": true},
+      #   {"arch": "mips_24kc", "target": "ath79-nand", "runtime_test": true},
       # ------------------------------------------------------------------
       matrix: >-
         ${{ fromJSON('{"include": [
