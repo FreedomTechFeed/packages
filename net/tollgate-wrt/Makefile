@@ -811,9 +811,16 @@ wait_for_iface() {
 	return 1
 }
 
+# Run the three uci-defaults scripts the package just installed, in the SAME
+# order the module's own packaging does: captive-portal symlink (90), credential
+# setup (99), then the fail-closed admin gate LAST (999). The gate refuses to
+# serve the admin board unless it can find a credential, so it MUST run after
+# 99-tollgate-setup has created one -- running it first on a fresh flash fails
+# closed and locks the operator out. This list names INSTALLED paths, so it must
+# track 999-tollgate-admin-setup in Package/tollgate-wrt/install below.
 for script in /etc/uci-defaults/90-tollgate-captive-portal-symlink \
               /etc/uci-defaults/99-tollgate-setup \
-              /etc/uci-defaults/92-tollgate-admin-setup; do
+              /etc/uci-defaults/999-tollgate-admin-setup; do
 	if [ -x "$$script" ]; then
 		echo "Running $$script ..."
 		"$$script" || echo "Warning: $$script exited with code $$?" >&2
@@ -966,12 +973,21 @@ define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
 	$(INSTALL_CONF) $(PKG_MAKEFILE_DIR)files/rpcd/tollgate_acl.json $(1)/usr/share/rpcd/acl.d/tollgate.json
 
-	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/uci-defaults/92-tollgate-admin-setup $(1)/etc/uci-defaults/
+	# GATE-LAST: the vendored source file keeps its name
+	# (files/uci-defaults/92-tollgate-admin-setup -- the drift guard and
+	# .github/scripts/check-vendor-drift.sh key on that path, so it must NOT be
+	# renamed), but it is INSTALLED as 999-tollgate-admin-setup. uci-defaults
+	# run in numeric order at boot, so installing the fail-closed admin gate as
+	# 92 made it run BEFORE 99-tollgate-setup (the credential script) and fail
+	# closed on a fresh flash, locking the operator out. 999 sorts after 99, so
+	# the credential exists first and the gate runs LAST -- the same order the
+	# postinst below uses, which means one writer wins in BOTH paths.
+	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/uci-defaults/92-tollgate-admin-setup $(1)/etc/uci-defaults/999-tollgate-admin-setup
 	# Substitute the BRAND webroot into the admin setup script (TollGate build ->
 	# /www/tollgate). The script reads __ADMIN_HOME__ and must never guess the
 	# brand by directory existence — a TollGate build must not serve a leftover
-	# net4sats webroot (and vice versa).
-	$(SED) 's|__ADMIN_HOME__|/www/tollgate|g' $(1)/etc/uci-defaults/92-tollgate-admin-setup
+	# net4sats webroot (and vice versa). Path tracks the 999 install name above.
+	$(SED) 's|__ADMIN_HOME__|/www/tollgate|g' $(1)/etc/uci-defaults/999-tollgate-admin-setup
 
 	$(INSTALL_DIR) $(1)/etc/crontabs
 
