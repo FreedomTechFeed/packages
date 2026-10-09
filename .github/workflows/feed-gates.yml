@@ -41,7 +41,8 @@ name: Feed gate harness
 #     SAME script the manager runs locally -- there is no CI-only copy of the rules.
 #
 #   * NO `continue-on-error` anywhere. A gate that cannot fail the check is not a
-#     gate.
+#     gate. (The second step below is guarded by `if: failure()`, NOT by
+#     continue-on-error, and it can only ever add red -- see the note on it.)
 #
 #   * `push: master` is included so the merge itself produces an authoritative run.
 #     A workflow added by a PR runs from the PR head for `pull_request` events, but
@@ -72,3 +73,22 @@ jobs:
 
       - name: Run the house gate harness (test-devendored.sh -> test-feed-ci.sh)
         run: sh net/tollgate-wrt/test-devendored.sh
+
+      # test-devendored.sh invokes test-feed-ci.sh with its output redirected to
+      # /dev/null, so when a feed-CI gate breaks its own failure line only says
+      # "Gate E: test-feed-ci.sh regressed" -- it does not say WHICH gate broke
+      # (the parked-row Gate J/K, the SDK-pin Gate H, the vendored-PR-CI Gate E/...).
+      # Re-running it here on failure prints the named gate into the job log.
+      #
+      # Diagnostics only, and it can only ever add red:
+      #   * `if: failure()` -- it is skipped when the harness passed, so the happy
+      #     path is one run, not two;
+      #   * it is NOT continue-on-error, so if the inner gate is what failed this
+      #     step fails too and names it;
+      #   * if the harness failed on a test-devendored-only gate (A-D) then this
+      #     replay passes and the job is still red from the step above.
+      # No gate logic is duplicated or modified: both steps invoke the repo's own
+      # scripts, unchanged.
+      - name: Name the failing feed-CI gate (diagnostics; only runs on failure)
+        if: failure()
+        run: sh net/tollgate-wrt/test-feed-ci.sh
