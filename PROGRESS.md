@@ -10,5 +10,6 @@
 8. Re-ran gate harness: test-feed-ci: PASS (RC=0); all D/J/K lines identical to baseline.
 9. Inertness: matrix + offline-matrix byte-identical (cmp OK; sha256 unchanged).
 10. Adversarial self-check: corrupted new ath79-nand row (Control-B style) → Gate K body exits 1 naming the row; clean file exits 0. New rows ARE parsed.
-11. Wrote REPORT.md, committed `ci: park ath79-nand AR300M target rows alongside the club set`, pushed to origin.
-12. Confirmed remote SHA via git ls-remote; opened PR against master.
+11. Wrote REPORT.md and PROGRESS.md; committed implementation atomically as `2312b41a05f3eddfe23cf67d450f0d58bf0422a` with conventional message.
+12. Pushed branch to origin; `git ls-remote` observed SHA `2312b41a05f3eddfe23cf67d450f0d58bf0422a`.
+13. Opened exactly one PR against master: https://github.com/FreedomTechFeed/packages/pull/56.

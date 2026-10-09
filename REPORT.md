@@ -81,9 +81,9 @@ The same Gate K body against the clean file returned exit code 0. Result: PASS �
 
 ## Commit and publication
 
-- Commit: `TODO — fill after observed commit`
-- Remote-observed branch SHA (`git ls-remote origin refs/heads/pr/ar300m-parked-nand`): `TODO — fill after push`
-- PR URL: `TODO — fill after opening PR`
+- Implementation commit: `2312b41a05f3eddfe23cf67d450f0d58bf0422a5`
+- Remote-observed branch SHA (`git ls-remote origin refs/heads/pr/ar300m-parked-nand`): `2312b41a05f3eddfe23cf67d450f0d58bf0422a5`
+- PR URL: https://github.com/FreedomTechFeed/packages/pull/56
 
 ## Remaining steps
 
