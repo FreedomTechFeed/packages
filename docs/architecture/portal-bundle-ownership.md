@@ -140,6 +140,20 @@ checks the same state instead of arming the board anyway. Ordering still
 enforced: portal merges first, then the feed re-pins (pin bump + re-vendor from
 the SAME commit, atomic).
 
+### The vendored gate is INSTALLED last: source name ≠ installed name
+
+`files/uci-defaults/92-tollgate-admin-setup` is vendored under its portal name
+(the drift guard and `.github/scripts/check-vendor-drift.sh` key on that exact
+path), but the feed's recipe **installs it as `999-tollgate-admin-setup`**. At
+boot uci-defaults run in numeric order, and this gate is fail-closed: it refuses
+to serve the :8090 board unless a credential exists, so it must run AFTER
+`99-tollgate-setup` creates one. Installing it as `92` made it run before the
+credential and locked the operator out on a fresh flash. `999` sorts after `99`,
+so the credential exists first and the gate runs LAST — matching the postinst's
+explicit order, so the SAME writer lands last in both paths.
+`net/tollgate-wrt/test-uci-defaults-order.sh` pins this. The **source file is
+never renamed** — renaming it would break the byte/name drift guard.
+
 ### Runtime files — OWNER: `OpenTollGate/tollgate-module-basic-go` (module, via tarball)
 
 init.d, uci-99, nftables.d, hotplug.d, usr/bin helpers, keep.d are installed from
