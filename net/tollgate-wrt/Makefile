@@ -432,7 +432,30 @@ PKG_NAME:=tollgate-wrt
 #   fix(packaging): ipk versions need ~ pre-release ordering — raw '-rc1' sorts after the release and blocks the rc1→final upgrade (#738)
 #   fix(brands): one assembled brand registry for the whitelabel prefix — rebrand gutter green again (#739)
 #   fix(api): serve the :2121 discovery advertisement as application/json (#730)
-PKG_VERSION:=0.6.0_rc1_pre26
+# ---------------------------------------------------------------------------
+# pre27 moves the module pin to the merged main tip b6f7aa74 and does nothing
+# else -- the same shape as every repin before it (the module moved, so
+# PKG_SOURCE_VERSION and PKG_HASH move with it; PKG_HASH is never recomputed
+# without a pin move and never left stale across one).
+# The repo-root VERSION file inside that tarball is still v0.6.0-rc1, so
+# PKG_SOURCE_TAG is UNCHANGED (Gate B in test-pkg-tarball-parity.sh compares the
+# two on every run).
+# Delta since 4614ac2 (the pre26 pin):
+#   fix(packaging): run the fail-closed admin gate LAST so the credential exists
+#     first (#838) -- the module-side half of the gate-last fix the FEED already
+#     ships (feed #57 stages the portal's 92 as 999). With this pin both the
+#     module's own recipe and the feed's agree that the credential (99) runs
+#     before the gate (999).
+#   feat(packaging): let the operator choose the admin password at install time
+#     (#82) -- carried into the feed by the 99-tollgate-setup the package
+#     installs from this tarball.
+#   fix(packaging): declare the CA bundle and state the manual-install trust
+#     chain (#828) -- the module-side mirror of feed #57.
+# This is the release-under-test for the apk-path board fix: pre26 shipped the
+# feed's admin gate as 92 (before 99), so a fresh hand-install left the board
+# off the air; feed #57 moved it to 999, and this pin brings the module's own
+# recipe into agreement.
+PKG_VERSION:=0.6.0_rc1_pre27
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -504,7 +527,7 @@ PKG_VERSION:=0.6.0_rc1_pre26
 # deliberately left alone: the tarball's own VERSION file is still
 # v0.6.0-alpha4 (Gate B enforces it on every run), and none of the four touches
 # portal content.
-PKG_SOURCE_VERSION:=4614ac274dca471bb7739488b242919e1b6958cc
+PKG_SOURCE_VERSION:=b6f7aa74d6262567e0f2a8baf2fa8e9502fa32c9
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -620,7 +643,7 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # recalibrated, and this value comes from a fresh download of the NEW pin, not
 # from the outgoing one.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=7da4e88d0805c42f692ca0921632a404f569b56bac33eada97429deaaddbe446
+PKG_HASH:=6bf16f638e9adcda7125ce7010eb02ae41bdedf28056a9b8b12682001e46f79e
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
