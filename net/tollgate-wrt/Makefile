@@ -455,7 +455,22 @@ PKG_NAME:=tollgate-wrt
 # feed's admin gate as 92 (before 99), so a fresh hand-install left the board
 # off the air; feed #57 moved it to 999, and this pin brings the module's own
 # recipe into agreement.
-PKG_VERSION:=0.6.0_rc1_pre27
+# ---------------------------------------------------------------------------
+# pre28 RE-VENDORS the captive-portal bundle and does nothing else: the module
+# pin (b6f7aa74), PKG_SOURCE_TAG and PKG_HASH are UNCHANGED. The portal pin
+# moves 752df98 -> 1fe13613 (OpenTollGate/tollgate-captive-portal-site main,
+# carrying portal #68 "forced password choice at first login").
+#   * vendor.lock.json portal_commit and its file hashes are regenerated from the
+#     bundle built at 1fe13613. The guest-portal SPA is byte-identical to
+#     752df98 (every guest asset hash is unchanged); only the admin board
+#     changed: assets/index-BByUkaK1.js -> index-DIm5Sxi1.js and the admin
+#     index.html.
+#   * the vendored rpcd plugin (openwrt/rpcd/tollgate) and its ACL changed at
+#     this pin and are re-vendored byte-for-byte; the drift guard
+#     (.github/scripts/check-vendor-drift.sh) and the lock verify
+#     (scripts/build-portal-bundle.sh) both pass locally.
+#   * the vendored 92-tollgate-admin-setup is UNCHANGED at this pin.
+PKG_VERSION:=0.6.0_rc1_pre28
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
