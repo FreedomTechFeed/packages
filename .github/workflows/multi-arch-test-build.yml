@@ -213,6 +213,13 @@ jobs:
         uses: openwrt/gh-action-sdk@v11
         env:
           ARCH: ${{ matrix.arch }}-${{ env.BRANCH }}
+          # OPT-IN prebaked builder image (#60 / fast-builds). gh-action-sdk
+          # builds its wrapper FROM `$CONTAINER:$ARCH`; the action's build-args
+          # pass CONTAINER from this env. Unset the repo variable -> stock
+          # ghcr.io/openwrt/sdk (behaviour unchanged). Set TOLLGATE_SDK_IMAGE ->
+          # the pre-warmed image from build-tollgate-sdk-image.yml. See
+          # docs/fast-builds.md.
+          CONTAINER: ${{ vars.TOLLGATE_SDK_IMAGE || 'ghcr.io/openwrt/sdk' }}
           FEEDNAME: packages_ci
           INDEX: 1
           V: s
