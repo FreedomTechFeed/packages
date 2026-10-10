@@ -673,13 +673,26 @@ GO_PKG_LDFLAGS_X:= \
 include $(INCLUDE_DIR)/package.mk
 include ../../lang/golang/golang-package.mk
 
+# +ca-bundle is a RUNTIME dependency (TLS trust), not a build dependency: the
+# gateway talks to Cashu mints and Lightning over TLS using the system root pool
+# only, so an image with no CA store cannot verify a payment. The installer used
+# to paper over that by fixing the box first; installing the package alone has to
+# work, so the dependency is declared. (The failure that surfaced it is in this
+# commit's message, not here.)
+#   ca-bundle is Architecture: all and `Provides: ca-certs`, and is present on
+#   BOTH lanes -- 24.10 opkg index (ca-bundle 20260816-r1, aarch64_cortex-a53 and
+#   mips_24kc) and the 25.12 apk index -- so the solver resolves it either way.
+#   Naming ca-certificates instead would pin a single provider of ca-certs.
+# Mirrored by the module repo's own recipe (packaging/Makefile with
+# tests/packaging/apk-install-resolution_test.sh) in
+# OpenTollGate/tollgate-module-basic-go#828; that half is NOT in this diff.
 define Package/tollgate-wrt
 	SECTION:=net
 	CATEGORY:=Network
 	SUBMENU:=Captive Portals
 	TITLE:=TollGate - Cashu-powered WiFi Payment Gateway
 	URL:=https://tollgate.me
-	DEPENDS:=+nodogsplash +jq $(GO_ARCH_DEPENDS)
+	DEPENDS:=+nodogsplash +jq +ca-bundle $(GO_ARCH_DEPENDS)
 endef
 
 define Package/tollgate-wrt/description
@@ -811,9 +824,16 @@ wait_for_iface() {
 	return 1
 }
 
+# Run the three uci-defaults scripts the package just installed, in the SAME
+# order the module's own packaging does: captive-portal symlink (90), credential
+# setup (99), then the fail-closed admin gate LAST (999). The gate refuses to
+# serve the admin board unless it can find a credential, so it MUST run after
+# 99-tollgate-setup has created one -- running it first on a fresh flash fails
+# closed and locks the operator out. This list names INSTALLED paths, so it must
+# track 999-tollgate-admin-setup in Package/tollgate-wrt/install below.
 for script in /etc/uci-defaults/90-tollgate-captive-portal-symlink \
               /etc/uci-defaults/99-tollgate-setup \
-              /etc/uci-defaults/92-tollgate-admin-setup; do
+              /etc/uci-defaults/999-tollgate-admin-setup; do
 	if [ -x "$$script" ]; then
 		echo "Running $$script ..."
 		"$$script" || echo "Warning: $$script exited with code $$?" >&2
@@ -966,12 +986,21 @@ define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
 	$(INSTALL_CONF) $(PKG_MAKEFILE_DIR)files/rpcd/tollgate_acl.json $(1)/usr/share/rpcd/acl.d/tollgate.json
 
-	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/uci-defaults/92-tollgate-admin-setup $(1)/etc/uci-defaults/
+	# GATE-LAST: the vendored source file keeps its name
+	# (files/uci-defaults/92-tollgate-admin-setup -- the drift guard and
+	# .github/scripts/check-vendor-drift.sh key on that path, so it must NOT be
+	# renamed), but it is INSTALLED as 999-tollgate-admin-setup. uci-defaults
+	# run in numeric order at boot, so installing the fail-closed admin gate as
+	# 92 made it run BEFORE 99-tollgate-setup (the credential script) and fail
+	# closed on a fresh flash, locking the operator out. 999 sorts after 99, so
+	# the credential exists first and the gate runs LAST -- the same order the
+	# postinst below uses, which means one writer wins in BOTH paths.
+	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/uci-defaults/92-tollgate-admin-setup $(1)/etc/uci-defaults/999-tollgate-admin-setup
 	# Substitute the BRAND webroot into the admin setup script (TollGate build ->
 	# /www/tollgate). The script reads __ADMIN_HOME__ and must never guess the
 	# brand by directory existence — a TollGate build must not serve a leftover
-	# net4sats webroot (and vice versa).
-	$(SED) 's|__ADMIN_HOME__|/www/tollgate|g' $(1)/etc/uci-defaults/92-tollgate-admin-setup
+	# net4sats webroot (and vice versa). Path tracks the 999 install name above.
+	$(SED) 's|__ADMIN_HOME__|/www/tollgate|g' $(1)/etc/uci-defaults/999-tollgate-admin-setup
 
 	$(INSTALL_DIR) $(1)/etc/crontabs
 

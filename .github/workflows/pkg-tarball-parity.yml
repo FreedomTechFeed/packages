@@ -29,12 +29,14 @@ on:
     paths:
       - 'net/tollgate-wrt/Makefile'
       - 'net/tollgate-wrt/test-pkg-tarball-parity.sh'
+      - 'net/tollgate-wrt/test-uci-defaults-order.sh'
       - 'net/tollgate-wrt/vendor.lock.json'
       - '.github/workflows/pkg-tarball-parity.yml'
   pull_request:
     paths:
       - 'net/tollgate-wrt/Makefile'
       - 'net/tollgate-wrt/test-pkg-tarball-parity.sh'
+      - 'net/tollgate-wrt/test-uci-defaults-order.sh'
       - 'net/tollgate-wrt/vendor.lock.json'
       - '.github/workflows/pkg-tarball-parity.yml'
   schedule:
@@ -57,3 +59,10 @@ jobs:
 
       - name: Compare the staged set against the pinned tarball, both ways
         run: sh net/tollgate-wrt/test-pkg-tarball-parity.sh
+
+      # Pins the uci-defaults RUN ORDER (credential before the fail-closed admin
+      # gate, gate last). Lives in this job because it reads the same recipe and
+      # the same gate the parity guard does; the parity test documents the order,
+      # this one fails if it regresses.
+      - name: Pin the uci-defaults run order (credential before gate, gate last)
+        run: sh net/tollgate-wrt/test-uci-defaults-order.sh

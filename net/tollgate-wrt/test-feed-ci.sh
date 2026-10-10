@@ -129,49 +129,116 @@ else
     rm -f "$_ractl"
 fi
 
-# --- Gate E: PR CI always builds tollgate-wrt and runtime test is non-blocking ---
+# --- Gate E: PR CI always builds tollgate-wrt; the runtime lane SKIPS a missing
+#     rootfs image and keeps its ONE escape hatch scoped + dated ---------------
 # The PR CI is vendored (not the upstream reusable workflow) so that:
 #   1. It ALWAYS builds tollgate-wrt. The upstream "Determine changed packages"
 #      step only builds packages whose */Makefile changed; a workflow-only PR
 #      would fall back to generic test packages and give ZERO signal about
 #      tollgate-wrt.
-#   2. The runtime smoke test is non-blocking (continue-on-error: true) because
-#      upstream bug openwrt/actions-shared-workflows#130 makes it fail
-#      deterministically (kmods feed 404) even when the package built fine.
-#   3. The runtime-test container BUILD is also non-blocking: the
-#      openwrt/rootfs:<arch>-<branch> image does not exist for every arch
-#      (aarch64_cortex-a72, arm_cortex-a7, mips64_octeonplus have no rootfs
-#      image on Docker Hub), so `docker build` fails with "not found" for those
-#      arches even though the package built fine.
-# Assert the vendored workflow encodes all three, so a revert to the upstream
-# reusable workflow (which reintroduces these problems) is caught.
+#   2. A missing openwrt/rootfs:<arch>-<branch> image SKIPS instead of failing:
+#      a preflight step (id: runtime_image) probes the tag, publishes
+#      available=true|false via $GITHUB_OUTPUT, and BOTH docker steps are gated
+#      on that output. Measured 2026-10-09 (PR #57, run 37999768278): the
+#      aarch64_cortex-a53 job died at `FROM openwrt/rootfs:aarch64_cortex-
+#      a53-openwrt-25.12` with "not found" (exit 1) and the follow-on "Test via
+#      Docker container" died with exit 125 ("Unable to find image
+#      'test-container:latest' locally" -- the container was never built), while
+#      BOTH steps still carried continue-on-error. A lane whose every red is
+#      expected is a lane nobody reads, so a real runtime regression would have
+#      been indistinguishable from the known noise.
+#   3. The remaining continue-on-error is scoped to the ONE documented upstream
+#      bug, openwrt/actions-shared-workflows#130 (the rootfs image carries a
+#      kmods feed URL for the kernel it was built with; once the branch moves the
+#      old kmods dir 404s and `opkg update` in the container fails), and it sits
+#      on the runtime TEST step, never on the container BUILD.
+#   4. That escape hatch is DATED: the workflow must carry a REMINDER with an
+#      expiry date and the issue link, so it is removed once upstream fixes it.
+# Assert all four, so a revert to the upstream reusable workflow (which
+# reintroduces these problems) is caught. Three negative controls mutate one
+# property each (hatch moved to the container build / gate removed / reminder
+# deleted) and must all be REFUSED.
 PR_WF=""
 for f in "$WORKFLOW_DIR"/*.yml; do
     if grep -q 'name: Test and Build' "$f" && grep -q 'PACKAGES="tollgate-wrt"' "$f"; then
         PR_WF="$f"
     fi
 done
-if [ -n "$PR_WF" ]; then
-    ok "PR CI vendored and always builds tollgate-wrt in $(basename "$PR_WF")"
-    # The runtime-test container build step must be non-blocking. Scope the
-    # check to the "Build Docker container" step block (from its `- name:` line
-    # until the next `- name:` at the same indent) and require a
-    # `continue-on-error: true` inside it.
+
+runtime_lane_check() { # runtime_lane_check <workflow-file> ; rc 0 = de-red contract holds
+    _f="$1"
+    grep -q 'id: runtime_image' "$_f" \
+        || { echo "no rootfs-image availability preflight step (id: runtime_image)"; return 1; }
+    grep -q 'echo "available=\$available" >> "\$GITHUB_OUTPUT"' "$_f" \
+        || { echo "the preflight does not publish available=... via \$GITHUB_OUTPUT"; return 1; }
+    _gated=$(grep -c "steps.runtime_image.outputs.available == 'true'" "$_f")
+    [ "$_gated" -ge 2 ] \
+        || { echo "only $_gated docker step(s) gated on the preflight result (both must be)"; return 1; }
+    # Count real YAML keys only, not the comments that mention the string.
+    _coe=$(grep -cE '^[[:space:]]*continue-on-error:[[:space:]]*true' "$_f")
+    [ "$_coe" -eq 1 ] \
+        || { echo "$_coe continue-on-error escape hatch(es) in the workflow (exactly one is allowed: the #130-scoped runtime test)"; return 1; }
+    # Scope each check to its step block: from the `- name:` line until the next
+    # `- name:` line.
     if awk '
         /^[[:space:]]*- name: Build Docker container/ {inbuild=1; next}
         inbuild && /^[[:space:]]*- name:/ {inbuild=0}
-        inbuild && /continue-on-error: true/ {found=1}
+        inbuild && /^[[:space:]]*continue-on-error: true/ {found=1}
         END {exit !found}
-    ' "$PR_WF"; then
-        ok "runtime-test container build is non-blocking (continue-on-error) in $(basename "$PR_WF")"
-    else
-        fail "runtime-test container build in $(basename "$PR_WF") is not non-blocking (missing continue-on-error: true on 'Build Docker container')"
+    ' "$_f"; then
+        echo "the runtime-test container BUILD is non-blocking again (a missing image is the preflight's business now)"; return 1
     fi
-    if grep -q 'continue-on-error: true' "$PR_WF"; then
-        ok "runtime smoke test is non-blocking (continue-on-error) in $(basename "$PR_WF")"
+    awk '
+        /^[[:space:]]*- name: Test via Docker container/ {intest=1; next}
+        intest && /^[[:space:]]*- name:/ {intest=0}
+        intest && /^[[:space:]]*continue-on-error: true/ {found=1}
+        END {exit !found}
+    ' "$_f" \
+        || { echo "the runtime TEST lost its escaped hatch for the documented upstream bug (openwrt/actions-shared-workflows#130)"; return 1; }
+    grep -q 'actions-shared-workflows#130' "$_f" \
+        || { echo "no reference to the upstream bug the escape hatch is scoped to (#130)"; return 1; }
+    grep -qE 'REMINDER.*[0-9]{4}-[0-9]{2}-[0-9]{2}' "$_f" \
+        || { echo "no DATED reminder to remove the escape hatch once upstream fixes #130"; return 1; }
+    return 0
+}
+
+if [ -n "$PR_WF" ]; then
+    ok "PR CI vendored and always builds tollgate-wrt in $(basename "$PR_WF")"
+    if _why=$(runtime_lane_check "$PR_WF"); then
+        ok "runtime lane is de-redded: a missing image SKIPs, and the only escape hatch is the dated #130 one on the test step"
     else
-        fail "runtime smoke test in $(basename "$PR_WF") is not non-blocking (missing continue-on-error: true)"
+        fail "the runtime lane can still go permanently RED / hide a real regression: $_why"
     fi
+    # Control A: moving the escape hatch onto the container BUILD (the previous
+    # shape) must be REFUSED.
+    _ectl=$(mktemp)
+    awk '/- name: Test via Docker container/ {intest=1}
+         !(intest && /^[[:space:]]*continue-on-error: true/)' "$PR_WF" \
+      | sed '/- name: Build Docker container/a\        continue-on-error: true' > "$_ectl"
+    if runtime_lane_check "$_ectl" >/dev/null 2>&1; then
+        fail "control: an escape hatch moved onto the container BUILD was ACCEPTED (the check is vacuous)"
+    else
+        ok "control: the check refuses a runtime lane that is non-blocking on the container build"
+    fi
+    rm -f "$_ectl"
+    # Control B: docker steps that are not gated on the preflight must be REFUSED.
+    _ectl=$(mktemp)
+    sed "s/ && steps.runtime_image.outputs.available == 'true'//g" "$PR_WF" > "$_ectl"
+    if runtime_lane_check "$_ectl" >/dev/null 2>&1; then
+        fail "control: docker steps with no image preflight gate were ACCEPTED (a missing image would go RED again)"
+    else
+        ok "control: the check refuses docker steps that are not gated on the image preflight"
+    fi
+    rm -f "$_ectl"
+    # Control C: an undated escape hatch (no removable reminder) must be REFUSED.
+    _ectl=$(mktemp)
+    grep -v 'REMINDER' "$PR_WF" > "$_ectl"
+    if runtime_lane_check "$_ectl" >/dev/null 2>&1; then
+        fail "control: an escape hatch with no dated reminder was ACCEPTED (it could never be removed)"
+    else
+        ok "control: the check refuses an escape hatch that carries no dated reminder"
+    fi
+    rm -f "$_ectl"
 else
     fail "no vendored PR CI workflow always builds tollgate-wrt (PACKAGES=\"tollgate-wrt\")"
 fi
