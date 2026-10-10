@@ -34,6 +34,18 @@ name: Test and Build
 #      runtime-test infra, not a failure of our package. The BUILD phase (which
 #      actually compiles tollgate-wrt) is the real gate.
 #
+#   4. SDK images are pinned to EXACT released versions (#60). The pin REMOVES a
+#      per-job download: branch-tag images are snapshot-built and ship WITHOUT
+#      the SDK, so every job downloaded ~260 MB (the exact-version images are
+#      +415-430 MB larger precisely because they bundle it). The "Pin the SDK"
+#      step now runs in 0 s. DO NOT expect a fast PR lane from this. The PR lane
+#      is still ~31 min, because the remaining cost is the `Build` step's
+#      dependency-closure rebuild -- measured 1200 s on run 38011377543, job
+#      "Test x86_64" -- which is billed to Build, not to any download. Correct
+#      wording: "download removed now; warm cache only from the second run on."
+#      A pinned released image is what makes the buildx gha-cache scope stable
+#      enough for a warm cache to be possible at all.
+#
 # The real build gate is release-publish.yml (tag-triggered, green) — this
 # workflow is the PR-time signal. The runtime TEST step carries a DATED
 # reminder saying when to delete the last escape hatch.
@@ -83,6 +95,17 @@ jobs:
       #   {"arch": "mipsel_24kc", "target": "mt7621", "runtime_test": false},
       #   {"arch": "mips64_octeonplus", "target": "octeon-generic", "runtime_test": true},
       #   {"arch": "mips_24kc", "target": "ath79-nand", "runtime_test": true},
+      # ------------------------------------------------------------------
+      # ACTIVE rows. DATED NOTE (2026-10-10, from the review of #59):
+      # aarch64_cortex-a53 / mediatek-filogic is the GL-MT6000 BENCH arch and an
+      # ACTIVE row here, but upstream does NOT publish
+      # openwrt/rootfs:aarch64_cortex-a53-openwrt-25.12, so its runtime smoke
+      # test SKIPS on EVERY run -- loudly, via the ::warning:: and job summary in
+      # the availability preflight below. It is the arch we most want a runtime
+      # signal for and the one that has none: this is a known, accepted gap, not
+      # a green result. DELETE THIS NOTE (and expect real runtime coverage for
+      # a53 to start reporting) once upstream publishes the image. Check with:
+      #   curl -fsS https://hub.docker.com/v2/repositories/openwrt/rootfs/tags/aarch64_cortex-a53-openwrt-25.12
       # ------------------------------------------------------------------
       matrix: >-
         ${{ fromJSON('{"include": [
@@ -341,6 +364,24 @@ jobs:
           fi
           echo "available=$available" >> "$GITHUB_OUTPUT"
           echo "runtime-test image $IMAGE -> available=$available"
+          # A SKIP must be LOUD. This lane already carries one deliberately
+          # silenced step (continue-on-error on the runtime TEST, scoped to
+          # openwrt/actions-shared-workflows#130), so a quiet skip is
+          # indistinguishable from a pass on a dashboard. Measured 2026-10-10:
+          # aarch64_cortex-a53 -- the GL-MT6000 BENCH arch, an ACTIVE matrix row
+          # below -- has no published rootfs image, so its runtime test skips on
+          # EVERY run. That is a permanent coverage gap and must be visible.
+          if [ "$available" = "false" ]; then
+            echo "::warning title=runtime lane SKIPPED for ${{ matrix.arch }}::openwrt/rootfs:${{ matrix.arch }}-${{ env.BRANCH }} is not published upstream, so the runtime smoke test was SKIPPED (not failed) -- a COVERAGE GAP, not a pass."
+            {
+              echo "### Runtime lane SKIPPED for ${{ matrix.arch }}"
+              echo ""
+              echo "\`openwrt/rootfs:${{ matrix.arch }}-${{ env.BRANCH }}\` is not published upstream,"
+              echo "so the runtime smoke test did not run for this arch."
+              echo ""
+              echo "**This is a coverage gap, not a pass.** See the dated note on the matrix row."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # Runtime-test container build. This step IS blocking again: the one cause
       # that used to justify continue-on-error here (a missing rootfs image) is
