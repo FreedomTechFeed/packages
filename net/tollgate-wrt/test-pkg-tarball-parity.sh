@@ -71,10 +71,14 @@
 #      silently drops or reorders a reload fails here instead of on hardware.
 #   J. the pair gate: the vendored 92 (from the portal pin) and the pinned
 #      module tarball's 99-tollgate-setup are the TWO writers of
-#      uhttpd.main.redirect_https, and the install order decides which lands
-#      last (the module's postinst runs the uci-defaults as 90, 99, 92 -- 92
-#      last there; numeric uci-defaults order at boot is 90, 92, 99 -- 99 last
-#      there). Two writers on one DERIVED value are safe only while they
+#      uhttpd.main.redirect_https. Both install paths now agree on GATE-LAST:
+#      the postinst runs them as 90, 99, 92-gate, and the gate is INSTALLED as
+#      999-tollgate-admin-setup so numeric uci-defaults order at boot is
+#      90, 99, 999 -- the same writer lands last either way. (Before the 999
+#      rename, boot order was 90, 92, 99, so 99 landed last at boot and 92 in
+#      the postinst: two different winners on one derived value.
+#      test-uci-defaults-order.sh now pins the unified gate-last order.) Two
+#      writers on one DERIVED value are safe only while they
 #      evaluate the SAME rule: the module CLI's coverage check, `tollgate ssl
 #      covers`. Measured counter-example (bench MT3000, pre17, 2026-09-26): the
 #      board's :8443 carried the OpenWrt image's placeholder certificate
@@ -572,9 +576,13 @@ fi
 # PAIR GATE: uhttpd.main.redirect_https has TWO writers and must have ONE rule.
 #
 # 92-tollgate-admin-setup (vendored here from the portal pin) and the pinned
-# module tarball's 99-tollgate-setup both write uhttpd.main.redirect_https, and
-# which one lands last depends on the install path -- the module's postinst runs
-# the uci-defaults as 90, 99, 92, while boot runs them numerically as 90, 92, 99.
+# module tarball's 99-tollgate-setup both write uhttpd.main.redirect_https. The
+# feed unifies BOTH paths on GATE-LAST: the postinst runs the uci-defaults as
+# 90, 99, 92, and the gate is installed as 999-tollgate-admin-setup so numeric
+# boot order is 90, 99, 999 -- so the SAME writer lands last whether the defaults
+# run at boot or the postinst drives them. (Pre-unification, boot order 90, 92,
+# 99 let 99 land last at boot while 92 won in the postinst: two different
+# writers on one derived value. test-uci-defaults-order.sh pins the unified order.)
 # Two scripts writing one DERIVED value are only safe while they evaluate the
 # same rule; the pre17 bench defect is what happens when they do not (the board's
 # :8443 carried the image's placeholder certificate and :8090 redirected to it --
