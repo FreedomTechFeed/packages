@@ -1,0 +1,119 @@
+name: Build TollGate SDK builder image
+
+# Publishes pre-warmed SDK builder images to GHCR:
+#     ghcr.io/freedomtechfeed/tollgate-sdk:<arch>-<version>
+#
+# These images let the PR lane (multi-arch-test-build.yml) and the tag lane
+# (release-publish.yml) skip the ~1200 s dependency-closure rebuild, by
+# pre-building the closure of net/tollgate-wrt at image build time.
+#
+# ADOPTION IS OPT-IN. The lanes consume the image only when the repository
+# variable TOLLGATE_SDK_IMAGE is set (see docs/fast-builds.md). Until then they
+# build from ghcr.io/openwrt/sdk exactly as before, so landing this workflow is
+# a no-op for the release until the image is validated and the variable is set.
+#
+# VALIDATION (do this before setting the variable):
+#   1. Actions -> "Build TollGate SDK builder image" -> Run workflow (push on).
+#   2. Confirm both images and the cache image exist under the org Packages.
+#   3. Make the package public (Settings -> Packages → visibility) so the
+#      unauthenticated gh-action-sdk pull works; or add a docker/login step to
+#      the consuming lanes.
+#   4. Set repo variable TOLLGATE_SDK_IMAGE=ghcr.io/freedomtechfeed/tollgate-sdk
+#      and open one PR; compare the "Test <arch>" job duration against ~42 min.
+
+on:
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "Push the images to GHCR (uncheck to build only)"
+        type: boolean
+        default: true
+  push:
+    branches: [master]
+    paths:
+      - ".github/sdk-builder/**"
+      - ".github/workflows/build-tollgate-sdk-image.yml"
+      - "net/tollgate-wrt/Makefile"
+  schedule:
+    - cron: "0 3 * * 0"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-tollgate-sdk-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    name: Derive the image matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: m
+        name: Derive (arch, sdk) from release-assets.py + the PR lane
+        run: |
+          set -euo pipefail
+          MATRIX=$(python3 .github/workflows/scripts/release-assets.py matrix)
+          python3 - "$MATRIX" <<'PY' >> "$GITHUB_OUTPUT"
+          import json, sys
+          rows = {}
+          for r in json.loads(sys.argv[1]):
+              rows[(r["arch"], r["sdk"])] = {"arch": r["arch"], "sdk": r["sdk"]}
+          # the PR lane also builds x86_64 on the pinned branch
+          rows[("x86_64", "25.12.5")] = {"arch": "x86_64", "sdk": "25.12.5"}
+          print("matrix=" + json.dumps({"include": list(rows.values())}))
+          PY
+
+  build:
+    name: Build image ${{ matrix.arch }}-${{ matrix.sdk }}
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Stage the package tree into the build context
+        run: |
+          set -euo pipefail
+          rm -rf .github/sdk-builder/feed
+          mkdir -p .github/sdk-builder/feed/net
+          cp -r net/tollgate-wrt .github/sdk-builder/feed/net/tollgate-wrt
+
+      - name: Remove unused Android SDK, .NET, Swift, GHC
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .github/sdk-builder
+          file: .github/sdk-builder/Dockerfile
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+          build-args: |
+            SDK_IMAGE=ghcr.io/openwrt/sdk:${{ matrix.arch }}-${{ matrix.sdk }}
+          tags: ghcr.io/freedomtechfeed/tollgate-sdk:${{ matrix.arch }}-${{ matrix.sdk }}
+          # Registry cache (option 1.2): durable and shared across jobs, unlike
+          # the gha cache which the workflow comments note only warms from the
+          # second run on. mode=max keeps the compile layers.
+          cache-from: type=registry,ref=ghcr.io/freedomtechfeed/tollgate-sdk-cache:${{ matrix.arch }}-${{ matrix.sdk }}
+          cache-to: type=registry,ref=ghcr.io/freedomtechfeed/tollgate-sdk-cache:${{ matrix.arch }}-${{ matrix.sdk }},mode=max
