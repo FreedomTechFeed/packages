@@ -99,13 +99,19 @@ jobs:
       # ACTIVE rows. DATED NOTE (2026-10-10, from the review of #59):
       # aarch64_cortex-a53 / mediatek-filogic is the GL-MT6000 BENCH arch and an
       # ACTIVE row here, but upstream does NOT publish
-      # openwrt/rootfs:aarch64_cortex-a53-openwrt-25.12, so its runtime smoke
-      # test SKIPS on EVERY run -- loudly, via the ::warning:: and job summary in
-      # the availability preflight below. It is the arch we most want a runtime
-      # signal for and the one that has none: this is a known, accepted gap, not
-      # a green result. DELETE THIS NOTE (and expect real runtime coverage for
-      # a53 to start reporting) once upstream publishes the image. Check with:
-      #   curl -fsS https://hub.docker.com/v2/repositories/openwrt/rootfs/tags/aarch64_cortex-a53-openwrt-25.12
+      # openwrt/rootfs:aarch64_cortex-a53-25.12.5 -- i.e. openwrt/rootfs:
+      # <arch>-<BRANCH>, the exact tag the availability preflight below probes
+      # (SDK_BRANCH is pinned to 25.12.5; the branch-tag form openwrt-25.12 is a
+      # DIFFERENT, SDK-less scheme that the SDK pin refuses and the workflow
+      # never probes) -- so its runtime smoke test SKIPS on EVERY run, loudly,
+      # via the ::warning:: and job summary in that preflight. It is the arch we
+      # most want a runtime signal for and the one that has none: this is a
+      # known, accepted gap, not a green result. DELETE THIS NOTE (and expect
+      # real runtime coverage for a53 to start reporting) once upstream
+      # publishes the image. Check with:
+      #   curl -fsS https://hub.docker.com/v2/repositories/openwrt/rootfs/tags/aarch64_cortex-a53-25.12.5
+      # A 200 from THAT tag is the trigger. The branch-tag mirror
+      # (openwrt-25.12) going 200 would NOT mean this lane starts running.
       # ------------------------------------------------------------------
       matrix: >-
         ${{ fromJSON('{"include": [
@@ -369,7 +375,7 @@ jobs:
           # openwrt/actions-shared-workflows#130), so a quiet skip is
           # indistinguishable from a pass on a dashboard. Measured 2026-10-10:
           # aarch64_cortex-a53 -- the GL-MT6000 BENCH arch, an ACTIVE matrix row
-          # below -- has no published rootfs image, so its runtime test skips on
+          # above -- has no published rootfs image, so its runtime test skips on
           # EVERY run. That is a permanent coverage gap and must be visible.
           if [ "$available" = "false" ]; then
             echo "::warning title=runtime lane SKIPPED for ${{ matrix.arch }}::openwrt/rootfs:${{ matrix.arch }}-${{ env.BRANCH }} is not published upstream, so the runtime smoke test was SKIPPED (not failed) -- a COVERAGE GAP, not a pass."
