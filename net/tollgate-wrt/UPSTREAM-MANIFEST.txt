@@ -1,0 +1,55 @@
+# UPSTREAM-MANIFEST.txt -- what travels to openwrt/packages, and what never does.
+#
+# Gate L (net/tollgate-wrt/test-upstream-fidelity.sh) asserts that EVERY tracked file
+# under net/tollgate-wrt/ is classified here exactly once. A new file added to the
+# package directory fails the gate until it is classified -- classification is a
+# decision, not a default.
+#
+# WHY THIS FILE EXISTS
+#   An upstream PR is PER-PATH: the maintainer reviews the package directory, and
+#   .github/** is never part of a package submission. That is what lets this fork use
+#   container-registry speed machinery (which upstream itself uses: gh-action-sdk)
+#   while remaining upstream-mergeable. This manifest makes the byte-split explicit,
+#   so an upstream submission is a mechanical extraction rather than an archaeology
+#   exercise, and no second long-lived "slow, pristine" branch is needed.
+#
+# HOW TO READ IT
+#   upstream   = belongs in a package PR to openwrt/packages. Must stay upstream-shaped:
+#                no fork URLs, no CI-only paths, no house-harness assumptions.
+#   fork-local = exists only for this fork's CI/release machinery. Must NOT travel;
+#                delete these paths (or the references to them) at submission time.
+#
+# Format: <classification> <path-or-glob>   (globs are shell case patterns)
+#
+# ---------------------------------------------------------------------------
+# The package itself -- this is the upstream submission.
+# ---------------------------------------------------------------------------
+upstream net/tollgate-wrt/Makefile
+upstream net/tollgate-wrt/files/*
+# test.sh / test-version.sh follow the openwrt/packages package-test convention:
+# test.sh says in its own header that it is "Called by the openwrt/packages
+# buildbot in the test environment after installing the tollgate-wrt package".
+upstream net/tollgate-wrt/test.sh
+upstream net/tollgate-wrt/test-version.sh
+
+# ---------------------------------------------------------------------------
+# Fork-local forever -- house CI, house harness, house vendoring pin.
+# ---------------------------------------------------------------------------
+# The house gate harness (Gates A-L). It reads .github/workflows/*, .ngit/act/*,
+# and .github/workflows/scripts/release-assets.py, so it is meaningless upstream.
+fork-local net/tollgate-wrt/test-devendored.sh
+fork-local net/tollgate-wrt/test-feed-ci.sh
+fork-local net/tollgate-wrt/test-pkg-tarball-parity.sh
+fork-local net/tollgate-wrt/test-uci-defaults-order.sh
+# Gate L itself, and this manifest. Self-referential on purpose: the enforcement
+# machinery is fork-local too, so it cannot leak into an upstream PR.
+fork-local net/tollgate-wrt/test-upstream-fidelity.sh
+fork-local net/tollgate-wrt/UPSTREAM-MANIFEST.txt
+# Builds the vendored captive-portal bundle from the pinned portal revision. It
+# exists because the SDK feed build cannot run Node/npm (see test.sh), so the
+# assets are vendored here instead -- a fork-side workaround, not upstream content.
+fork-local net/tollgate-wrt/scripts/build-portal-bundle.sh
+# The fork's portal pin, consumed by .github/scripts/check-vendor-drift.sh. The
+# Makefile only *mentions* it in comments, so it is not a build input; a package PR
+# would carry the pin in the vendoring narrative instead.
+fork-local net/tollgate-wrt/vendor.lock.json

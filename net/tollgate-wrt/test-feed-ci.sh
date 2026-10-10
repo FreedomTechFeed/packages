@@ -14,6 +14,9 @@
 #      .apk/.ipk assets named deterministically:
 #        tollgate-wrt_<PKG_VERSION>_<arch>.apk / .ipk
 #      so the wizard can fetch the correct binary for the detected arch.
+#   4. (Gate L) Every tracked file under the package directory MUST be classified
+#      as "travels to upstream" or "fork-local" in UPSTREAM-MANIFEST.txt, so the
+#      upstream-mergeable subset stays mechanically extractable.
 #   3. (Gate H) The PR build MUST pin a RELEASED OpenWrt branch, never the
 #      mutable snapshots/ tree: a snapshot's sha256sums can rotate between the
 #      sums fetch and the SDK tarball download, failing the job for reasons
@@ -542,6 +545,19 @@ if python3 "$ROOT/.github/workflows/scripts/release-assets.py" matrix \
     ok "the mips_24kc .apk is still built (the bundle ships it)"
 else
     fail "the mips_24kc .apk is no longer in the build matrix (the bundle would ship nothing)"
+fi
+
+# --- Gate L: the package ships ONLY bytes upstream can accept ----------------
+# Enforced by net/tollgate-wrt/test-upstream-fidelity.sh. That script asserts every
+# tracked file under net/tollgate-wrt/ is classified in UPSTREAM-MANIFEST.txt as
+# either "travels to openwrt/packages" or "fork-local forever", and that files/ and
+# the Makefile always travel. Read its header for why this gate is the thing that
+# lets ONE tree serve both a fast container-registry build and an upstream PR
+# without a second long-lived branch.
+if sh "$PKG_DIR/test-upstream-fidelity.sh"; then
+    ok "Gate L: the upstream/fork-local split is explicit and complete"
+else
+    fail "Gate L: test-upstream-fidelity.sh regressed -- the package no longer has an enforced upstream/fork-local split, so an upstream submission would be undefined"
 fi
 
 if [ "$FAIL" = 1 ]; then
