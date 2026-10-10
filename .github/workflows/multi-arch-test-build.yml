@@ -138,16 +138,24 @@ jobs:
       # openwrt/rootfs:<arch>-<branch>; it is NON-BLOCKING (continue-on-error)
       # and known-broken upstream (openwrt/actions-shared-workflows#130), so this
       # pin does not weaken the gate — the Build phase is the gate.
-      - name: Pin the SDK branch to an immutable release
+      - name: Pin the SDK to an exact released version (bundled-SDK image)
         run: |
-          SDK_BRANCH="openwrt-25.12"
+          SDK_BRANCH="25.12.5"
           case "$SDK_BRANCH" in
             main|master|snapshot*|"")
-              echo "::error::SDK_BRANCH='$SDK_BRANCH' is a mutable snapshot tree. The SDK checksum race documented above (PR #46) returns with it: a snapshot's sha256sums can rotate between the sums fetch and the tarball download, failing this job for reasons unrelated to any PR. Pin a released openwrt-<major>.<minor> branch instead."
+              echo "::error::SDK_BRANCH='$SDK_BRANCH' is a mutable snapshot tree. The SDK checksum race documented above (PR #46) returns with it: a snapshot's sha256sums can rotate between the sums fetch and the tarball download, failing this job for reasons unrelated to any PR. Pin an exact released version (major.minor.patch) instead."
+              exit 1
+              ;;
+            openwrt-*)
+              echo "::error::SDK_BRANCH='$SDK_BRANCH' is a BRANCH tag, not a release. ghcr.io/openwrt/sdk branch-tag images are snapshot-built and ship WITHOUT the SDK (gh-action-sdk entrypoint: 'snapshot containers don't ship with the SDK to save bandwidth'), so every job still downloads the ~260 MB tarball from the OpenWrt mirrors -- measured 2026-10-08, run 37839847702: the openwrt-25.12 apk-lane job spent 10,434 s on that download, the openwrt-24.10 ipk-lane job 3 h 38 m. Exact-version images (e.g. 25.12.5) bundle the SDK: no download, and the buildx gha-cache scope stays stable."
               exit 1
               ;;
           esac
-          echo "Building against the immutable release branch $SDK_BRANCH"
+          case "$SDK_BRANCH" in
+            [0-9]*.[0-9]*.[0-9]*) : ;;
+            *) echo "::error::SDK_BRANCH='$SDK_BRANCH' is not an exact released OpenWrt version (major.minor.patch, e.g. 25.12.5). Branch tags and snapshots are refused above." && exit 1 ;;
+          esac
+          echo "Building against the exact released SDK $SDK_BRANCH (image bundles the SDK)"
           echo "BRANCH=$SDK_BRANCH" >> $GITHUB_ENV
 
       # This feed's sole purpose is tollgate-wrt. Always build it so every PR

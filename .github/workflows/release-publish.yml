@@ -13,8 +13,8 @@ name: Publish per-arch tollgate-wrt release assets
 # so the correct binary is fetched for the detected router arch.
 #
 # Two SDK images are built per arch:
-#   - openwrt-25.12 -> apk-tools package (.apk), OpenWrt 25.12+
-#   - openwrt-24.10 -> opkg package (.ipk), OpenWrt <=24.x
+#   - 25.12.x (apk-tools era) -> .apk package, OpenWrt 25.12+
+#   - 24.10.x (opkg era)      -> .ipk package, OpenWrt <=24.x
 # This mirrors how the wizard selects .apk vs .ipk by package manager. The apk
 # lane builds against a released branch, not the mutable `master` snapshot:
 # snapshots cannot be safely checksum-verified (PR #46 race) and permanently
