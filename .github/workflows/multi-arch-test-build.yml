@@ -1,7 +1,7 @@
 name: Test and Build
 
 # Vendored from openwrt/actions-shared-workflows/.github/workflows/multi-arch-test-build.yml@main
-# (commit pinned at the time of vendoring) with two deliberate changes so PR CI
+# (commit pinned at the time of vendoring) with three deliberate changes so PR CI
 # gives REAL signal about tollgate-wrt and is not blocked by a known-broken
 # upstream runtime test:
 #
@@ -12,21 +12,31 @@ name: Test and Build
 #      tollgate-wrt. This feed's sole purpose is tollgate-wrt, so we always
 #      build it.
 #
-#   2. Runtime smoke test is NON-BLOCKING (continue-on-error: true). Upstream
-#      bug openwrt/actions-shared-workflows#130: runtime-test containers are
-#      built from openwrt/rootfs:<arch>-<branch> images that carry a kmods feed
-#      URL for the exact kernel they were built with. When the branch moves to a
-#      newer kernel the old kmods dir is removed and `opkg update` 404s. Every
-#      runtime test fails even though the package built fine. We keep the test
-#      as a best-effort smoke check but the BUILD phase (which actually compiles
-#      tollgate-wrt) is the real gate. The runtime-test container BUILD is also
-#      non-blocking: openwrt/rootfs:<arch>-<branch> does not exist for every arch
-#      (e.g. aarch64_cortex-a72, arm_cortex-a7, mips64_octeonplus have no rootfs
-#      image on Docker Hub), so `docker build` fails with "not found" for those
-#      arches even though the package built fine.
+#   2. A MISSING runtime rootfs image now SKIPS, it does not go RED. Both docker
+#      steps used to carry continue-on-error, so the whole runtime lane was
+#      unreadable: a genuine runtime regression looked exactly like the known
+#      noise. openwrt/rootfs:<arch>-<branch> is not published for every arch
+#      (measured 2026-10-09 UTC with `docker manifest inspect` and the Docker Hub
+#      tags API: x86_64, mips_24kc and aarch64_generic exist; aarch64_cortex-a53
+#      -- an ACTIVE row of the matrix below -- aarch64_cortex-a72,
+#      arm_cortex-a7, mipsel_24kc and mips64_octeonplus do not), and `docker
+#      build` then dies
+#      at its FROM line with "not found" (exit 1). The preflight step below
+#      probes the tag and the two docker steps are gated on its result, so an
+#      absent image is a clean SKIP.
+#
+#   3. The runtime TEST keeps continue-on-error: true, scoped to the ONE
+#      documented upstream bug: openwrt/actions-shared-workflows#130.
+#      Runtime-test containers are built from openwrt/rootfs:<arch>-<branch>
+#      images that carry a kmods feed URL for the exact kernel they were built
+#      with; when the branch moves to a newer kernel the old kmods dir is
+#      removed and `opkg update` inside the container 404s. That is upstream
+#      runtime-test infra, not a failure of our package. The BUILD phase (which
+#      actually compiles tollgate-wrt) is the real gate.
 #
 # The real build gate is release-publish.yml (tag-triggered, green) — this
-# workflow is the PR-time signal.
+# workflow is the PR-time signal. The runtime TEST step carries a DATED
+# reminder saying when to delete the last escape hatch.
 
 on:
   pull_request:
@@ -135,9 +145,10 @@ jobs:
       # control that refuses a revert to `master`).
       #
       # The runtime-test container further down pulls
-      # openwrt/rootfs:<arch>-<branch>; it is NON-BLOCKING (continue-on-error)
-      # and known-broken upstream (openwrt/actions-shared-workflows#130), so this
-      # pin does not weaken the gate — the Build phase is the gate.
+      # openwrt/rootfs:<arch>-<branch>; that step is gated on a preflight which
+      # proves the tag exists, and the only remaining continue-on-error is scoped
+      # to the documented upstream bug (openwrt/actions-shared-workflows#130), so
+      # this pin does not weaken the gate — the Build phase is the gate.
       - name: Pin the SDK branch to an immutable release
         run: |
           SDK_BRANCH="openwrt-25.12"
@@ -262,6 +273,20 @@ jobs:
           sudo apt-get install -y qemu-user-static binfmt-support
           sudo update-binfmts --import
 
+      # Upstream PARITY, restored 2026-10-10: this checkout list must match the
+      # one in openwrt/actions-shared-workflows' own multi-arch-test-build.yml,
+      # because Dockerfile.feeds ADDs every file it fetches. Upstream added
+      # scripts/sysctl.init (commit 483a355b2e, 2026-09-21) to BOTH the
+      # Dockerfile and its own sparse-checkout list; our vendored list lagged one
+      # file behind, so `docker build` failed for every arch whose rootfs image
+      # DOES exist with:
+      #   #8 [4/4] ADD scripts/sysctl.init /etc/init.d/sysctl
+      #   ERROR: ... "/scripts/sysctl.init": not found
+      # (measured 2026-10-09, run 37999768278, jobs Test x86_64 and Test
+      # mips_24kc -- both exit 1). That failure has nothing to do with a missing
+      # image, so the image preflight below could not have covered it. The three
+      # shared scripts are never replaced locally; only the path list is made
+      # identical to upstream's.
       - name: Checkout test scripts
         if: ${{ matrix.runtime_test && fromJSON(env.HAVE_PKGS) }}
         uses: actions/checkout@v7
@@ -272,18 +297,51 @@ jobs:
             .github/scripts/ci_helpers.sh
             .github/dockerfiles/Dockerfile.feeds
             .github/scripts/test_entrypoint.sh
+            .github/scripts/sysctl.init
           sparse-checkout-cone-mode: false
 
-      # Runtime-test container build. Also NON-BLOCKING (continue-on-error: true)
-      # for the same reason as the test below: the openwrt/rootfs:<arch>-<branch>
-      # image does not exist for every arch (e.g. aarch64_cortex-a72,
-      # arm_cortex-a7, mips64_octeonplus have no rootfs image on Docker Hub), so
-      # `docker build` fails with "not found" even though the package built fine.
-      # This is upstream runtime-test infra, not a failure of our package. The
-      # BUILD phase (which actually compiles tollgate-wrt) is the real gate.
-      - name: Build Docker container
+      # PREFLIGHT: does openwrt/rootfs:<arch>-<branch> exist at all?
+      #
+      # Everything below builds on a rootfs image we do not control and upstream
+      # does not publish for every arch. Measured 2026-10-09 on PR #57 (run
+      # 37999768278, job "Test aarch64_cortex-a53" -- an ACTIVE row of the matrix
+      # above) the container build died at the FROM line with
+      #   ERROR: docker.io/openwrt/rootfs:aarch64_cortex-a53-openwrt-25.12: not found
+      # and, because the container was then never built, the run below failed with
+      #   Unable to find image 'test-container:latest' locally ... exit code 125.
+      # Both were invisible because continue-on-error painted over them. Probing
+      # the tag first turns an absent image into an explicit SKIP.
+      #
+      # `docker manifest inspect` is a registry round-trip that needs no daemon
+      # pull; the Docker Hub tag API is the fallback for the runs where the
+      # registry answers 401/429 for an anonymous client. Both are existence
+      # probes, and a false negative costs one skipped smoke test -- it can never
+      # turn a broken build green, because a wrong `available=true` still has to
+      # survive the real `docker build`.
+      - name: Check runtime-test rootfs image availability
+        id: runtime_image
         if: ${{ matrix.runtime_test && fromJSON(env.HAVE_PKGS) }}
-        continue-on-error: true
+        run: |
+          IMAGE="openwrt/rootfs:${{ matrix.arch }}-${{ env.BRANCH }}"
+          available=false
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            available=true
+          elif curl -fsSL --max-time 30 \
+                 "https://hub.docker.com/v2/repositories/openwrt/rootfs/tags/${{ matrix.arch }}-${{ env.BRANCH }}" \
+                 >/dev/null 2>&1; then
+            available=true
+          fi
+          echo "available=$available" >> "$GITHUB_OUTPUT"
+          echo "runtime-test image $IMAGE -> available=$available"
+
+      # Runtime-test container build. This step IS blocking again: the one cause
+      # that used to justify continue-on-error here (a missing rootfs image) is
+      # now the preflight's business, and it is a SKIP rather than a failure. What
+      # is left is upstream runtime-test infra that can genuinely regress, so it
+      # must be able to say so. The BUILD phase (which actually compiles
+      # tollgate-wrt) remains the gate for the package itself.
+      - name: Build Docker container
+        if: ${{ matrix.runtime_test && fromJSON(env.HAVE_PKGS) && steps.runtime_image.outputs.available == 'true' }}
         run: |
           docker build \
             --build-arg ARCH \
@@ -294,14 +352,31 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}-${{ env.BRANCH }}
 
-      # Runtime smoke test. KNOWN-BROKEN upstream (openwrt/actions-shared-workflows#130):
-      # the rootfs image carries a kmods feed URL for the exact kernel it was built
-      # with; when the branch moves to a newer kernel the old kmods dir 404s and
-      # `opkg update` fails. This is NOT a failure of our package. We keep the test
-      # as a best-effort smoke check but make it NON-BLOCKING (continue-on-error)
-      # so the build phase — which actually compiles tollgate-wrt — is the gate.
+      # Runtime smoke test. This is the ONLY remaining continue-on-error in this
+      # workflow, and it is scoped to the ONE documented upstream bug:
+      # openwrt/actions-shared-workflows#130 — the runtime-test rootfs image
+      # carries a kmods feed URL for the exact kernel it was built with; when the
+      # branch moves to a newer kernel that kmods directory is removed from the
+      # download server and `opkg update` inside the container fails (the
+      # entrypoint runs it under `set -o errexit`), so the runtime test fails even
+      # though the package built fine. Upstream's own fix is open as PR #130,
+      # "ci: test_entrypoint: drop the kmods feed before installing packages".
+      #
+      # The hatch is deliberately NARROW. It does not cover a missing rootfs image
+      # (the preflight above SKIPs those) nor a failed container build (blocking
+      # again). A red here for any reason other than the kmods feed IS a real
+      # signal.
+      #
+      # REMINDER — DELETE THIS ESCAPE HATCH BY 2026-12-01.
+      # Re-check https://github.com/openwrt/actions-shared-workflows/pull/130
+      # (open + draft since 2026-08-13; last touched 2026-09-20). Once it lands,
+      # `continue-on-error` must go: a runtime lane that can never block cannot
+      # catch a real runtime regression, which is the whole reason this lane
+      # exists. Gate E of net/tollgate-wrt/test-feed-ci.sh asserts the scope of
+      # this hatch and the presence of this reminder, so the removal is a visible
+      # change rather than a silently forgotten one.
       - name: Test via Docker container
-        if: ${{ matrix.runtime_test && fromJSON(env.HAVE_PKGS) }}
+        if: ${{ matrix.runtime_test && fromJSON(env.HAVE_PKGS) && steps.runtime_image.outputs.available == 'true' }}
         continue-on-error: true
         run: |
           docker run \

@@ -212,11 +212,23 @@ than calling the openwrt shared workflow, for two reasons:
    shared workflow's default matrix does NOT include the bench GL-MT6000 arch,
    so without the override the bench router's arch never builds.
 
-The runtime smoke test in that workflow is deliberately **non-blocking**
-(`continue-on-error: true`): upstream `openwrt/actions-shared-workflows#130`
-makes it fail deterministically (kmods feed 404) even when the package built
-fine. The **Build** phase — which actually compiles `tollgate-wrt` — is the
-gate.
+The runtime lane in that workflow is **not** allowed to be permanently red:
+
+* A preflight step (`Check runtime-test rootfs image availability`) probes
+  `openwrt/rootfs:<arch>-<branch>` and both docker steps are gated on its
+  `available` output, so an arch upstream does not publish a rootfs image for
+  (measured 2026-10-09 UTC with `docker manifest inspect` and the Docker Hub tags
+  API: `x86_64`, `mips_24kc` and `aarch64_generic` exist; `aarch64_cortex-a53`,
+  `aarch64_cortex-a72`, `arm_cortex-a7`, `mipsel_24kc` and `mips64_octeonplus` do
+  not) **skips** the runtime steps instead of failing at `FROM … not found`.
+* The remaining `continue-on-error: true` is scoped to one documented upstream
+  bug: `openwrt/actions-shared-workflows#130`, whose rootfs images carry a kmods
+  feed URL for the kernel they were built with — once the branch moves, the old
+  kmods dir 404s and `opkg update` in the container fails. It sits on the runtime
+  **test** step only, carries a dated reminder, and is asserted (with negative
+  controls) by Gate E of `net/tollgate-wrt/test-feed-ci.sh`.
+
+The **Build** phase — which actually compiles `tollgate-wrt` — is the gate.
 
 #### The SDK branch is pinned to an immutable release (`openwrt-25.12`)
 
