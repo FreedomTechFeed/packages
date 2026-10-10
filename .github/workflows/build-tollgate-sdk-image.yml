@@ -61,7 +61,7 @@ jobs:
           python3 - "$MATRIX" <<'PY' >> "$GITHUB_OUTPUT"
           import json, sys
           rows = {}
-          for r in json.loads(sys.argv[1]):
+          for r in json.loads(sys.argv[1])["include"]:
               rows[(r["arch"], r["sdk"])] = {"arch": r["arch"], "sdk": r["sdk"]}
           # the PR lane also builds x86_64 on the pinned branch
           rows[("x86_64", "25.12.5")] = {"arch": "x86_64", "sdk": "25.12.5"}
