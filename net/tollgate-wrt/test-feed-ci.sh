@@ -120,7 +120,7 @@ else
         fail "the club device set is no longer shippable: $_why"
     fi
     _ractl=$(mktemp --suffix=.py)
-    sed '/"aarch64_cortex-a53", "mediatek-filogic", "openwrt-25\.12", "apk"/d' "$REL_ASSETS" > "$_ractl"
+    sed '/"aarch64_cortex-a53", "mediatek-filogic", "25\.12\.5", "apk"/d' "$REL_ASSETS" > "$_ractl"
     if club_ship_check "$_ractl" >/dev/null 2>&1; then
         fail "control: the a53 .apk release row was removed and ACCEPTED (the check is vacuous)"
     else
@@ -268,9 +268,10 @@ sdk_pin_check() { # sdk_pin_check <workflow-file> ; rc 0 = pinned immutably
     _f="$1"
     _pin=$(grep -oE 'SDK_BRANCH="[^"]+"' "$_f" 2>/dev/null | head -n1 | sed 's/.*="//;s/"$//')
     case "$_pin" in
-        openwrt-[0-9]*.[0-9]*) : ;;
-        "") echo "no SDK_BRANCH=\"openwrt-<major>.<minor>\" pin found (a mutable snapshot tree would be built against)"; return 1 ;;
-        *)  echo "SDK_BRANCH='$_pin' is not a released openwrt-<major>.<minor> branch"; return 1 ;;
+        [0-9]*.[0-9]*.[0-9]*) : ;;
+        openwrt-*) echo "SDK_BRANCH='$_pin' is a BRANCH tag: ghcr branch-tag SDK images are snapshot-built and ship without the SDK, so every job still downloads the ~260 MB tarball (measured 2026-10-08, run 37839847702: 10,434 s on the apk lane). Pin the exact released version, e.g. 25.12.5"; return 1 ;;
+        "") echo "no SDK_BRANCH exact-version pin found (a mutable snapshot tree would be built against)"; return 1 ;;
+        *)  echo "SDK_BRANCH='$_pin' is not an exact released OpenWrt version (major.minor.patch)"; return 1 ;;
     esac
     if ! grep -qE 'main\|master\|snapshot\*' "$_f"; then
         echo "the pin has no fail-closed guard refusing master/main/snapshot*"
@@ -288,16 +289,24 @@ if [ ! -f "$PR_BUILD_WF" ]; then
     fail "the vendored PR build workflow is missing: $PR_BUILD_WF"
 else
     if _why=$(sdk_pin_check "$PR_BUILD_WF"); then
-        ok "the PR build is pinned to an immutable released SDK branch (no snapshot race)"
+        ok "the PR build is pinned to an exact released SDK version (bundled-SDK image: no snapshot race, no per-job tarball download)"
     else
         fail "the PR build can hit the SDK snapshot checksum race: $_why"
     fi
     _ctl=$(mktemp)
-    sed 's/^\( *SDK_BRANCH=\)"openwrt-[0-9.]*"/\1"master"/' "$PR_BUILD_WF" > "$_ctl"
+    sed 's/^\( *SDK_BRANCH=\)"[0-9.]*"/\1"master"/' "$PR_BUILD_WF" > "$_ctl"
     if sdk_pin_check "$_ctl" >/dev/null 2>&1; then
         fail "control: a workflow pinned to the mutable 'master' snapshot branch was ACCEPTED (the check is vacuous)"
     else
         ok "control: the check refuses a workflow pinned back to the mutable master snapshot branch"
+    fi
+    rm -f "$_ctl"
+    _ctl=$(mktemp)
+    sed 's/^\( *SDK_BRANCH=\)"[0-9.]*"/\1"openwrt-25.12"/' "$PR_BUILD_WF" > "$_ctl"
+    if sdk_pin_check "$_ctl" >/dev/null 2>&1; then
+        fail "control: a workflow pinned to the BRANCH tag 'openwrt-25.12' was ACCEPTED (branch-tag images are snapshot-built and SDK-less)"
+    else
+        ok "control: the check refuses a workflow pinned to the SDK-less branch tag 'openwrt-25.12'"
     fi
     rm -f "$_ctl"
 fi
@@ -323,7 +332,7 @@ import json, re, subprocess, sys
 rows = json.loads(subprocess.run(
     ["python3", sys.argv[1], "matrix"], capture_output=True, text=True, check=True).stdout)["include"]
 bad = sorted({r["sdk"] for r in rows
-              if not re.match(r"^openwrt-[0-9]+\.[0-9]+$", r["sdk"])})
+              if not re.match(r"^[0-9]+\.[0-9]+\.[0-9]+$", r["sdk"])})
 sys.exit(1 if bad else 0)
 PY
 }
@@ -332,16 +341,24 @@ if [ ! -f "$REL_ASSETS" ]; then
     fail "the release matrix script is missing: $REL_ASSETS"
 else
     if release_sdk_pin_check "$REL_ASSETS"; then
-        ok "every release-lane SDK is a released openwrt-<major>.<minor> branch (no snapshot lane)"
+        ok "every release-lane SDK is an exact released version (bundled-SDK image: no snapshot lane, no per-job tarball download)"
     else
         fail "a release lane builds against a non-released SDK branch (mutable snapshot: checksum race + permanent cache miss; see Gate H)"
     fi
     _ctl=$(mktemp --suffix=.py)
-    sed 's/"openwrt-25\.12", "apk"/"master", "apk"/g' "$REL_ASSETS" > "$_ctl"
+    sed 's/"25\.12\.5", "apk"/"master", "apk"/g' "$REL_ASSETS" > "$_ctl"
     if release_sdk_pin_check "$_ctl" >/dev/null 2>&1; then
         fail "control: a release matrix pinned back to 'master' was ACCEPTED (the check is vacuous)"
     else
         ok "control: the check refuses a release matrix pinned back to the mutable master snapshot"
+    fi
+    rm -f "$_ctl"
+    _ctl=$(mktemp --suffix=.py)
+    sed 's/"25\.12\.5", "apk"/"openwrt-25.12", "apk"/g' "$REL_ASSETS" > "$_ctl"
+    if release_sdk_pin_check "$_ctl" >/dev/null 2>&1; then
+        fail "control: a release matrix pinned to the BRANCH tag 'openwrt-25.12' was ACCEPTED (branch-tag images are snapshot-built and SDK-less)"
+    else
+        ok "control: the check refuses a release matrix pinned to the SDK-less branch tag 'openwrt-25.12'"
     fi
     rm -f "$_ctl"
 fi
@@ -447,7 +464,7 @@ else
     rm -f "$_kctl"
     # Control B: a corrupted parked row (no longer paste-back-able) must be refused.
     _kctl=$(mktemp --suffix=.py)
-    sed '/^    # ("x86_64", "x86-64", "openwrt-25\.12", "apk"),$/s/"apk"),/"apk),/' "$REL_ASSETS" > "$_kctl"
+    sed '/^    # ("x86_64", "x86-64", "25\.12\.5", "apk"),$/s/"apk"),/"apk),/' "$REL_ASSETS" > "$_kctl"
     if parked_rows_check "$_kctl" >/dev/null 2>&1; then
         fail "control: a corrupted (unrestorable) parked row was ACCEPTED (the check is vacuous)"
     else
