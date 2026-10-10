@@ -299,7 +299,7 @@ awk -v pfx='$(PKG_TARBALL_DIR)/' '
 ' "$MK" > "$SCRATCH/refs.txt"
 
 if [ ! -s "$SCRATCH/refs.txt" ]; then
-    fail "the install recipe references \$(PKG_TARBALL_DIR) nowhere -- did the recipe change shape?"
+    fail "Gate B: the install recipe references \$(PKG_TARBALL_DIR) nowhere -- did the recipe change shape?"
 fi
 
 : > "$SCRATCH/staged.txt"

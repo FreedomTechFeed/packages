@@ -14,13 +14,16 @@
 #      .apk/.ipk assets named deterministically:
 #        tollgate-wrt_<PKG_VERSION>_<arch>.apk / .ipk
 #      so the wizard can fetch the correct binary for the detected arch.
-#   4. (Gate L) Every tracked file under the package directory MUST be classified
+#   3. (Gate L) Every tracked file under the package directory MUST be classified
 #      as "travels to upstream" or "fork-local" in UPSTREAM-MANIFEST.txt, so the
 #      upstream-mergeable subset stays mechanically extractable.
-#   3. (Gate H) The PR build MUST pin a RELEASED OpenWrt branch, never the
+#   4. (Gate H) The PR build MUST pin a RELEASED OpenWrt branch, never the
 #      mutable snapshots/ tree: a snapshot's sha256sums can rotate between the
 #      sums fetch and the SDK tarball download, failing the job for reasons
 #      unrelated to any PR (measured on PR #46, job aarch64_cortex-a72).
+#   5. (Gate M) Every failure message MUST name its gate, so the harness replay
+#      wired into feed-gates.yml reports WHICH sub-gate broke instead of an
+#      anonymous "the harness failed".
 #
 # Exit status: 0 = pass, 1 = fail.
 
@@ -52,7 +55,7 @@ for f in "$WORKFLOW_DIR"/*.yml; do
         ok "matrix override references aarch64_cortex-a53/mediatek-filogic in $(basename "$f")"
     fi
 done
-[ "$A53_FOUND" = 1 ] || fail "no workflow references aarch64_cortex-a53/mediatek-filogic (bench GL-MT6000 arch)"
+[ "$A53_FOUND" = 1 ] || fail "Gate A: no workflow references aarch64_cortex-a53/mediatek-filogic (bench GL-MT6000 arch)"
 
 # --- Gate B: release/tag-triggered per-arch asset build exists ---
 # A workflow must trigger on tags/releases and upload per-arch assets.
@@ -63,14 +66,14 @@ for f in "$WORKFLOW_DIR"/*.yml; do
         ok "release-triggered asset upload present in $(basename "$f")"
     fi
 done
-[ "$RELEASE_WF" = 1 ] || fail "no release/tag-triggered workflow uploads per-arch assets"
+[ "$RELEASE_WF" = 1 ] || fail "Gate B: no release/tag-triggered workflow uploads per-arch assets"
 
 # --- Gate C: deterministic asset naming ---
 # Asset name must be tollgate-wrt_<PKG_VERSION>_<arch>.apk/.ipk. The arch is
 # threaded through the matrix; the version comes from the Makefile. We assert
 # the naming pattern appears in the release workflow.
 PKG_VERSION=$(grep '^PKG_VERSION:=' "$PKG_DIR/Makefile" | sed 's/^PKG_VERSION:=//')
-[ -n "$PKG_VERSION" ] || fail "could not read PKG_VERSION from $PKG_DIR/Makefile"
+[ -n "$PKG_VERSION" ] || fail "Gate C: could not read PKG_VERSION from $PKG_DIR/Makefile"
 ok "PKG_VERSION=$PKG_VERSION"
 
 NAME_PATTERN_FOUND=0
@@ -80,7 +83,7 @@ for f in "$WORKFLOW_DIR"/*.yml; do
         ok "deterministic asset naming pattern present in $(basename "$f")"
     fi
 done
-[ "$NAME_PATTERN_FOUND" = 1 ] || fail "no workflow encodes the tollgate-wrt_<version>_<arch> asset naming pattern"
+[ "$NAME_PATTERN_FOUND" = 1 ] || fail "Gate C: no workflow encodes the tollgate-wrt_<version>_<arch> asset naming pattern"
 
 # --- Gate D: the club device set stays SHIPPABLE ----------------------------
 # (2026-10-08, operator product call) The release lane ships exactly the
@@ -115,17 +118,17 @@ sys.exit(rc)
 PY
 }
 if [ ! -f "$REL_ASSETS" ]; then
-    fail "the release matrix script is missing: $REL_ASSETS (Gate D cannot run)"
+    fail "Gate D: the release matrix script is missing: $REL_ASSETS"
 else
     if _why=$(club_ship_check "$REL_ASSETS"); then
         ok "the club device set (a53 = MT3000/MT6000, mips_24kc = AR300M) keeps its .apk row and offline bundle"
     else
-        fail "the club device set is no longer shippable: $_why"
+        fail "Gate D: the club device set is no longer shippable: $_why"
     fi
     _ractl=$(mktemp --suffix=.py)
     sed '/"aarch64_cortex-a53", "mediatek-filogic", "25\.12\.5", "apk"/d' "$REL_ASSETS" > "$_ractl"
     if club_ship_check "$_ractl" >/dev/null 2>&1; then
-        fail "control: the a53 .apk release row was removed and ACCEPTED (the check is vacuous)"
+        fail "Gate D: control: the a53 .apk release row was removed and ACCEPTED (the check is vacuous)"
     else
         ok "control: the check refuses a club device arch whose .apk release row was removed"
     fi
@@ -210,7 +213,7 @@ if [ -n "$PR_WF" ]; then
     if _why=$(runtime_lane_check "$PR_WF"); then
         ok "runtime lane is de-redded: a missing image SKIPs, and the only escape hatch is the dated #130 one on the test step"
     else
-        fail "the runtime lane can still go permanently RED / hide a real regression: $_why"
+        fail "Gate E: the runtime lane can still go permanently RED / hide a real regression: $_why"
     fi
     # Control A: moving the escape hatch onto the container BUILD (the previous
     # shape) must be REFUSED.
@@ -219,7 +222,7 @@ if [ -n "$PR_WF" ]; then
          !(intest && /^[[:space:]]*continue-on-error: true/)' "$PR_WF" \
       | sed '/- name: Build Docker container/a\        continue-on-error: true' > "$_ectl"
     if runtime_lane_check "$_ectl" >/dev/null 2>&1; then
-        fail "control: an escape hatch moved onto the container BUILD was ACCEPTED (the check is vacuous)"
+        fail "Gate E: control: an escape hatch moved onto the container BUILD was ACCEPTED (the check is vacuous)"
     else
         ok "control: the check refuses a runtime lane that is non-blocking on the container build"
     fi
@@ -228,7 +231,7 @@ if [ -n "$PR_WF" ]; then
     _ectl=$(mktemp)
     sed "s/ && steps.runtime_image.outputs.available == 'true'//g" "$PR_WF" > "$_ectl"
     if runtime_lane_check "$_ectl" >/dev/null 2>&1; then
-        fail "control: docker steps with no image preflight gate were ACCEPTED (a missing image would go RED again)"
+        fail "Gate E: control: docker steps with no image preflight gate were ACCEPTED (a missing image would go RED again)"
     else
         ok "control: the check refuses docker steps that are not gated on the image preflight"
     fi
@@ -237,13 +240,13 @@ if [ -n "$PR_WF" ]; then
     _ectl=$(mktemp)
     grep -v 'REMINDER' "$PR_WF" > "$_ectl"
     if runtime_lane_check "$_ectl" >/dev/null 2>&1; then
-        fail "control: an escape hatch with no dated reminder was ACCEPTED (it could never be removed)"
+        fail "Gate E: control: an escape hatch with no dated reminder was ACCEPTED (it could never be removed)"
     else
         ok "control: the check refuses an escape hatch that carries no dated reminder"
     fi
     rm -f "$_ectl"
 else
-    fail "no vendored PR CI workflow always builds tollgate-wrt (PACKAGES=\"tollgate-wrt\")"
+    fail "Gate E: no vendored PR CI workflow always builds tollgate-wrt (PACKAGES=\"tollgate-wrt\")"
 fi
 
 
@@ -289,17 +292,17 @@ sdk_pin_check() { # sdk_pin_check <workflow-file> ; rc 0 = pinned immutably
 
 PR_BUILD_WF="$ROOT/.github/workflows/multi-arch-test-build.yml"
 if [ ! -f "$PR_BUILD_WF" ]; then
-    fail "the vendored PR build workflow is missing: $PR_BUILD_WF"
+    fail "Gate H: the vendored PR build workflow is missing: $PR_BUILD_WF"
 else
     if _why=$(sdk_pin_check "$PR_BUILD_WF"); then
         ok "the PR build is pinned to an exact released SDK version (bundled-SDK image: no snapshot race, no per-job tarball download)"
     else
-        fail "the PR build can hit the SDK snapshot checksum race: $_why"
+        fail "Gate H: the PR build can hit the SDK snapshot checksum race: $_why"
     fi
     _ctl=$(mktemp)
     sed 's/^\( *SDK_BRANCH=\)"[0-9.]*"/\1"master"/' "$PR_BUILD_WF" > "$_ctl"
     if sdk_pin_check "$_ctl" >/dev/null 2>&1; then
-        fail "control: a workflow pinned to the mutable 'master' snapshot branch was ACCEPTED (the check is vacuous)"
+        fail "Gate H: control: a workflow pinned to the mutable 'master' snapshot branch was ACCEPTED (the check is vacuous)"
     else
         ok "control: the check refuses a workflow pinned back to the mutable master snapshot branch"
     fi
@@ -307,7 +310,7 @@ else
     _ctl=$(mktemp)
     sed 's/^\( *SDK_BRANCH=\)"[0-9.]*"/\1"openwrt-25.12"/' "$PR_BUILD_WF" > "$_ctl"
     if sdk_pin_check "$_ctl" >/dev/null 2>&1; then
-        fail "control: a workflow pinned to the BRANCH tag 'openwrt-25.12' was ACCEPTED (branch-tag images are snapshot-built and SDK-less)"
+        fail "Gate H: control: a workflow pinned to the BRANCH tag 'openwrt-25.12' was ACCEPTED (branch-tag images are snapshot-built and SDK-less)"
     else
         ok "control: the check refuses a workflow pinned to the SDK-less branch tag 'openwrt-25.12'"
     fi
@@ -341,17 +344,17 @@ PY
 }
 REL_ASSETS="$WORKFLOW_DIR/scripts/release-assets.py"
 if [ ! -f "$REL_ASSETS" ]; then
-    fail "the release matrix script is missing: $REL_ASSETS"
+    fail "Gate I: the release matrix script is missing: $REL_ASSETS"
 else
     if release_sdk_pin_check "$REL_ASSETS"; then
         ok "every release-lane SDK is an exact released version (bundled-SDK image: no snapshot lane, no per-job tarball download)"
     else
-        fail "a release lane builds against a non-released SDK branch (mutable snapshot: checksum race + permanent cache miss; see Gate H)"
+        fail "Gate H: a release lane builds against a non-released SDK branch (mutable snapshot: checksum race + permanent cache miss)"
     fi
     _ctl=$(mktemp --suffix=.py)
     sed 's/"25\.12\.5", "apk"/"master", "apk"/g' "$REL_ASSETS" > "$_ctl"
     if release_sdk_pin_check "$_ctl" >/dev/null 2>&1; then
-        fail "control: a release matrix pinned back to 'master' was ACCEPTED (the check is vacuous)"
+        fail "Gate I: control: a release matrix pinned back to 'master' was ACCEPTED (the check is vacuous)"
     else
         ok "control: the check refuses a release matrix pinned back to the mutable master snapshot"
     fi
@@ -359,7 +362,7 @@ else
     _ctl=$(mktemp --suffix=.py)
     sed 's/"25\.12\.5", "apk"/"openwrt-25.12", "apk"/g' "$REL_ASSETS" > "$_ctl"
     if release_sdk_pin_check "$_ctl" >/dev/null 2>&1; then
-        fail "control: a release matrix pinned to the BRANCH tag 'openwrt-25.12' was ACCEPTED (branch-tag images are snapshot-built and SDK-less)"
+        fail "Gate I: control: a release matrix pinned to the BRANCH tag 'openwrt-25.12' was ACCEPTED (branch-tag images are snapshot-built and SDK-less)"
     else
         ok "control: the check refuses a release matrix pinned to the SDK-less branch tag 'openwrt-25.12'"
     fi
@@ -396,17 +399,17 @@ gate_j() { # gate_j <workflow> <release-assets.py> ; rc 0 = consistent
 }
 
 if [ ! -f "$PR_BUILD_WF" ]; then
-    fail "the vendored PR build workflow is missing: $PR_BUILD_WF (Gate J cannot run)"
+    fail "Gate J: the vendored PR build workflow is missing: $PR_BUILD_WF"
 else
     if _why=$(gate_j "$PR_BUILD_WF" "$REL_ASSETS"); then
         ok "every release-lane arch keeps an active-or-parked PR row (parking cannot hide the restore path)"
     else
-        fail "PR matrix lost the restore path for a shipped arch: $_why"
+        fail "Gate J: PR matrix lost the restore path for a shipped arch: $_why"
     fi
     _wfctl=$(mktemp)
     sed '/"arch": "mips_24kc"/d' "$PR_BUILD_WF" > "$_wfctl"
     if gate_j "$_wfctl" "$REL_ASSETS" >/dev/null 2>&1; then
-        fail "control: a shipped arch whose active-or-parked row was deleted from the PR workflow was ACCEPTED (the check is vacuous)"
+        fail "Gate J: control: a shipped arch whose active-or-parked row was deleted from the PR workflow was ACCEPTED (the check is vacuous)"
     else
         ok "control: the check refuses a shipped arch with no active-or-parked PR row"
     fi
@@ -449,18 +452,18 @@ sys.exit(rc)
 PY
 }
 if [ ! -f "$REL_ASSETS" ]; then
-    fail "the release matrix script is missing: $REL_ASSETS (Gate K cannot run)"
+    fail "Gate K: the release matrix script is missing: $REL_ASSETS"
 else
     if _why=$(parked_rows_check "$REL_ASSETS"); then
         ok "every parked release row is still a literal, paste-back-able 4-tuple"
     else
-        fail "a parked release row cannot be restored: $_why"
+        fail "Gate K: a parked release row cannot be restored: $_why"
     fi
     # Control A: parking degraded into DELETION (no parked rows at all) must be refused.
     _kctl=$(mktemp --suffix=.py)
     sed '/^    # ("/d' "$REL_ASSETS" > "$_kctl"
     if parked_rows_check "$_kctl" >/dev/null 2>&1; then
-        fail "control: a matrix whose parked rows were DELETED was ACCEPTED (the check is vacuous)"
+        fail "Gate K: control: a matrix whose parked rows were DELETED was ACCEPTED (the check is vacuous)"
     else
         ok "control: the check refuses a matrix whose parked rows were deleted"
     fi
@@ -469,7 +472,7 @@ else
     _kctl=$(mktemp --suffix=.py)
     sed '/^    # ("x86_64", "x86-64", "25\.12\.5", "apk"),$/s/"apk"),/"apk),/' "$REL_ASSETS" > "$_kctl"
     if parked_rows_check "$_kctl" >/dev/null 2>&1; then
-        fail "control: a corrupted (unrestorable) parked row was ACCEPTED (the check is vacuous)"
+        fail "Gate K: control: a corrupted (unrestorable) parked row was ACCEPTED (the check is vacuous)"
     else
         ok "control: the check refuses a corrupted parked row"
     fi
@@ -534,7 +537,7 @@ if [ "$BUNDLE_RC" = 0 ]; then
     ok "$(grep -m1 '^PASS ' .bundle-gate.$$ | sed 's/^PASS //')"
     ok "every apk-lane arch's bundle coverage is accounted for (gaps reported, not hidden)"
 else
-    fail "$(grep -m1 '^FAIL ' .bundle-gate.$$ | sed 's/^FAIL //')"
+    fail "Gate F: $(grep -m1 '^FAIL ' .bundle-gate.$$ | sed 's/^FAIL //')"
 fi
 rm -f .bundle-gate.$$
 
@@ -544,7 +547,7 @@ if python3 "$ROOT/.github/workflows/scripts/release-assets.py" matrix \
      | python3 -c 'import json,sys; d=json.load(sys.stdin)["include"]; sys.exit(0 if any(r["arch"]=="mips_24kc" and r["ext"]=="apk" for r in d) else 1)'; then
     ok "the mips_24kc .apk is still built (the bundle ships it)"
 else
-    fail "the mips_24kc .apk is no longer in the build matrix (the bundle would ship nothing)"
+    fail "Gate F: the mips_24kc .apk is no longer in the build matrix (the bundle would ship nothing)"
 fi
 
 # --- Gate L: the package ships ONLY bytes upstream can accept ----------------
@@ -559,6 +562,26 @@ if sh "$PKG_DIR/test-upstream-fidelity.sh"; then
 else
     fail "Gate L: test-upstream-fidelity.sh regressed -- the package no longer has an enforced upstream/fork-local split, so an upstream submission would be undefined"
 fi
+
+# --- Gate M: every failure message NAMES its gate ----------------------------
+# WHY: feed-gates.yml runs test-devendored.sh, which invokes THIS harness with its
+# output redirected to /dev/null and reports only "Gate E: test-feed-ci.sh
+# regressed". A second, if:failure() step re-runs the harness to recover the
+# detail -- and that replay is only useful if each fail() message says WHICH gate
+# broke. Without that, the next sub-gate to regress is anonymous and triage costs
+# a full local re-run.
+#
+# This gate keeps the naming honest as sub-gates are ADDED. It is the cheapest
+# possible check (a grep) and it goes red the moment someone writes a bare
+# fail(), so "which gate failed?" cannot quietly rot into "Gate E failed".
+for _hm in "$PKG_DIR"/test-*.sh; do
+    [ -f "$_hm" ] || continue
+    _unnamed=$(grep -nE 'fail[[:space:]]+"' "$_hm" 2>/dev/null | grep -vE 'fail[[:space:]]+"Gate [A-Z]+[.:]' || true)
+    if [ -n "$_unnamed" ]; then
+        _n=$(printf '%s\n' "$_unnamed" | wc -l)
+        fail "Gate M: $(basename "$_hm") has $_n failure message(s) that do not name their gate, so a regression reports only 'the harness failed'. First: $(printf '%s' "$_unnamed" | head -1 | sed 's/^[[:space:]]*//' | cut -c1-100)"
+    fi
+done
 
 if [ "$FAIL" = 1 ]; then
     echo "test-feed-ci: FAILED" >&2
