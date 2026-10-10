@@ -25,6 +25,11 @@
 # The package itself -- this is the upstream submission.
 # ---------------------------------------------------------------------------
 upstream net/tollgate-wrt/Makefile
+# NOTE on files/*: the `*` is a shell case pattern and CROSSES `/`, so ANYTHING added
+# under files/ is auto-classified upstream without a manifest edit. That is the right
+# default for an installed payload, but it means L2's "a new file fails until it is
+# classified" does NOT hold inside files/. Committed build output under files/ is caught
+# separately by Gate A in test-devendored.sh.
 upstream net/tollgate-wrt/files/*
 # test.sh / test-version.sh follow the openwrt/packages package-test convention:
 # test.sh says in its own header that it is "Called by the openwrt/packages

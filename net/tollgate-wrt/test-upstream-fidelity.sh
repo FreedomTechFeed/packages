@@ -28,6 +28,19 @@
 #       the payload installed on the router and the artifact upstream reviews.
 #   L4  net/tollgate-wrt/Makefile is classified upstream -- it is the core artifact, and
 #       the thing a package PR is actually about.
+#   L5  no file classified `upstream` FUNCTIONALLY references a fork-local path -- i.e.
+#       the extracted submission would still build. Comments are stripped first; see the
+#       L5 section below for why the scope is functional-only.
+#
+# WHAT IT DOES *NOT* PROVE (read before trusting the title)
+#   L1-L4 enforce a PARTITION, not the labels: they prove every tracked file is
+#   classified, and that files/ and the Makefile carry the labels they must. They cannot
+#   prove any OTHER label is the right one -- measured: relabelling test-devendored.sh,
+#   test-feed-ci.sh and even this manifest as `upstream` leaves the gate GREEN, because
+#   the manifest IS the decision record. So the gate proves completeness, not
+#   correctness. Correctness is a human decision recorded in the manifest; L5 catches the
+#   one correctness failure that is mechanically detectable (a submission that would not
+#   build).
 #
 # Exit status: 0 = pass, 1 = fail.
 set -u
@@ -58,8 +71,12 @@ if [ ! -f "$MANIFEST" ]; then
     exit 1
 fi
 
-ENTRIES=$(mktemp) || exit 1
-TRACKED=$(mktemp) || exit 1
+if ! ENTRIES=$(mktemp) || ! TRACKED=$(mktemp); then
+    fail "Gate L: cannot create a scratch file (mktemp failed); the gate could not run at all, which is a FAILURE, not a pass"
+    echo "test-upstream-fidelity: FAILED" >&2
+    exit 1
+fi
+FORKNAMES=$(mktemp) || { fail "Gate L: cannot create a scratch file (mktemp failed)"; echo "test-upstream-fidelity: FAILED" >&2; exit 1; }
 N_UP=0
 N_FORK=0
 
@@ -164,7 +181,55 @@ else
     ok "Gate L: the Makefile is classified upstream"
 fi
 
-rm -f "$ENTRIES" "$TRACKED"
+# --- L5: no upstream-classified file FUNCTIONALLY references a fork-local path ---
+# WHY the scope is "functional only", measured at the head that added L5:
+#   The Makefile is classified `upstream` while naming five fork-local artifacts across
+#   27 COMMENT lines (test-pkg-tarball-parity.sh x13, scripts/build-portal-bundle.sh x5,
+#   vendor.lock.json x5, test-devendored.sh x3, .github/scripts/check-vendor-drift.sh x1;
+#   e.g. :32 :140 :150 :288 :572 :873 :878 :972 :991), and
+#   files/uci-defaults/92-tollgate-admin-setup names vendor.lock.json in a comment too.
+#   None of those is a non-comment reference -- verified 0 for all five paths -- so the
+#   extracted tree still builds. That is a DOCUMENTATION non-conformance (recorded in
+#   docs/upstream-submission.md step 4), not a build breakage.
+#   If L5 flagged comment text it would red the tree on a cosmetic issue and bury the
+#   real signal, so L5 answers exactly one question: WOULD THE EXTRACTED TREE BREAK?
+#
+# Comment stripping is `#`-to-EOL, the convention in both the Makefile and the shell
+# payload. It is an approximation -- a `#` inside a quoted string would be treated as a
+# comment start. No such line exists in the package dir today.
+L5_BAD=""
+: >"$FORKNAMES"
+while IFS='|' read -r cls glob; do
+    [ "$cls" = "fork-local" ] || continue
+    case "$glob" in
+        */*) printf '%s\n' "${glob##*/}" >>"$FORKNAMES" ;;
+    esac
+done <"$ENTRIES"
+
+while IFS= read -r path; do
+    mcls5=""
+    while IFS='|' read -r cls glob; do
+        case "$path" in
+            $glob) mcls5="$cls" ;;
+        esac
+    done <"$ENTRIES"
+    [ "$mcls5" = "upstream" ] || continue
+    [ -f "$ROOT/$path" ] || continue
+    while IFS= read -r fn; do
+        [ -n "$fn" ] || continue
+        if sed 's/#.*$//' "$ROOT/$path" 2>/dev/null | grep -qF -- "$fn"; then
+            L5_BAD="$L5_BAD $path->$fn"
+        fi
+    done <"$FORKNAMES"
+done <"$TRACKED"
+
+if [ -n "$L5_BAD" ]; then
+    fail "Gate L: these upstream-classified files FUNCTIONALLY reference fork-local paths (the extracted submission would break):$L5_BAD"
+else
+    ok "Gate L: no upstream-classified file functionally references a fork-local path (the extracted tree builds)"
+fi
+
+rm -f "$ENTRIES" "$TRACKED" "$FORKNAMES"
 
 if [ "$FAIL" = 1 ]; then
     echo "test-upstream-fidelity: FAILED" >&2
