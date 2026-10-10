@@ -21,9 +21,10 @@
 #      mutable snapshots/ tree: a snapshot's sha256sums can rotate between the
 #      sums fetch and the SDK tarball download, failing the job for reasons
 #      unrelated to any PR (measured on PR #46, job aarch64_cortex-a72).
-#   5. (Gate M) Every failure message MUST name its gate, so the harness replay
-#      wired into feed-gates.yml reports WHICH sub-gate broke instead of an
-#      anonymous "the harness failed".
+#   5. (Gate M) Every failure message in the package harness (PKG_DIR/test-*.sh)
+#      MUST name its gate, so the harness replay wired into feed-gates.yml
+#      reports WHICH sub-gate broke instead of an anonymous "the harness failed".
+#      Other repo harnesses are out of scope.
 #
 # Exit status: 0 = pass, 1 = fail.
 
@@ -349,7 +350,7 @@ else
     if release_sdk_pin_check "$REL_ASSETS"; then
         ok "every release-lane SDK is an exact released version (bundled-SDK image: no snapshot lane, no per-job tarball download)"
     else
-        fail "Gate H: a release lane builds against a non-released SDK branch (mutable snapshot: checksum race + permanent cache miss)"
+        fail "Gate I: a release lane builds against a non-released SDK branch (mutable snapshot: checksum race + permanent cache miss; see Gate H)"
     fi
     _ctl=$(mktemp --suffix=.py)
     sed 's/"25\.12\.5", "apk"/"master", "apk"/g' "$REL_ASSETS" > "$_ctl"
@@ -574,14 +575,23 @@ fi
 # This gate keeps the naming honest as sub-gates are ADDED. It is the cheapest
 # possible check (a grep) and it goes red the moment someone writes a bare
 # fail(), so "which gate failed?" cannot quietly rot into "Gate E failed".
+# NOTE: grep is line-granular, so an unnamed fail() sharing a physical line with a
+# named one would be excluded with that line. No such line exists today.
+_gm_files=0
+_gm_named=0
+_gm_bad=0
 for _hm in "$PKG_DIR"/test-*.sh; do
     [ -f "$_hm" ] || continue
-    _unnamed=$(grep -nE 'fail[[:space:]]+"' "$_hm" 2>/dev/null | grep -vE 'fail[[:space:]]+"Gate [A-Z]+[.:]' || true)
+    _gm_files=$((_gm_files + 1))
+    _gm_named=$((_gm_named + $(grep -cE 'fail[[:space:]]+"Gate [A-Za-z0-9]+[.:]' "$_hm" 2>/dev/null || true)))
+    _unnamed=$(grep -nE 'fail[[:space:]]+"' "$_hm" 2>/dev/null | grep -vE 'fail[[:space:]]+"Gate [A-Za-z0-9]+[.:]' || true)
     if [ -n "$_unnamed" ]; then
+        _gm_bad=$((_gm_bad + 1))
         _n=$(printf '%s\n' "$_unnamed" | wc -l)
-        fail "Gate M: $(basename "$_hm") has $_n failure message(s) that do not name their gate, so a regression reports only 'the harness failed'. First: $(printf '%s' "$_unnamed" | head -1 | sed 's/^[[:space:]]*//' | cut -c1-100)"
+        fail "Gate M: $(basename "$_hm") has $_n failure message(s) that do not name their gate, so a regression reports only 'the harness failed'. First: $(printf '%s\n' "$_unnamed" | head -1 | cut -d: -f2- | sed 's/^[[:space:]]*//' | cut -c1-100)"
     fi
 done
+[ "$_gm_bad" = 0 ] && ok "Gate M: every failure message in the package harness names its gate ($_gm_named named across $_gm_files files)"
 
 if [ "$FAIL" = 1 ]; then
     echo "test-feed-ci: FAILED" >&2
