@@ -150,6 +150,9 @@ jobs:
         uses: openwrt/gh-action-sdk@v11
         env:
           ARCH: ${{ matrix.arch }}-${{ matrix.sdk }}
+          # OPT-IN prebaked builder image — see multi-arch-test-build.yml and
+          # docs/fast-builds.md. Unset -> stock ghcr.io/openwrt/sdk.
+          CONTAINER: ${{ vars.TOLLGATE_SDK_IMAGE || 'ghcr.io/openwrt/sdk' }}
           FEEDNAME: tollgate
           PACKAGES: tollgate-wrt
           INDEX: 1
