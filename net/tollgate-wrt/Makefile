@@ -470,7 +470,19 @@ PKG_NAME:=tollgate-wrt
 #     (.github/scripts/check-vendor-drift.sh) and the lock verify
 #     (scripts/build-portal-bundle.sh) both pass locally.
 #   * the vendored 92-tollgate-admin-setup is UNCHANGED at this pin.
-PKG_VERSION:=0.6.0_rc1_pre28
+# ---------------------------------------------------------------------------
+# pre29 ships the board + password-UX fixes:
+#   * the module pin moves to 67407a96 -- the head of the
+#     fix/board-first-run-no-print branch (PR OpenTollGate/tollgate-module-basic-go#850),
+#     which STOPS printing the generated admin/WiFi credentials and adds
+#     TOLLGATE_PRIVATE_WIFI_PASSWORD. NOTE: that PR is blocked on a required
+#     approving review; this pin is the branch head, NOT main, so it must be
+#     moved to the merged main commit before the RC is cut.
+#   * the portal is re-vendored to c11e6053 (main, PR #70): the pre-auth
+#     first-run page that sets root + private-WiFi; rpcd + ACL re-vendored.
+#   * feed #71 (already on main) keeps LuCI on the secondary pair (early entry_ui
+#     announcer 91-tollgate-admin-ui-mode).
+PKG_VERSION:=0.6.0_rc1_pre29
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -542,7 +554,7 @@ PKG_VERSION:=0.6.0_rc1_pre28
 # deliberately left alone: the tarball's own VERSION file is still
 # v0.6.0-alpha4 (Gate B enforces it on every run), and none of the four touches
 # portal content.
-PKG_SOURCE_VERSION:=b6f7aa74d6262567e0f2a8baf2fa8e9502fa32c9
+PKG_SOURCE_VERSION:=67407a9655e960bb41c4e0c466a0b0e1d3a73c46
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -658,7 +670,7 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # recalibrated, and this value comes from a fresh download of the NEW pin, not
 # from the outgoing one.
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=6bf16f638e9adcda7125ce7010eb02ae41bdedf28056a9b8b12682001e46f79e
+PKG_HASH:=2522b99b4ff3c7492380f613d4d079f039eff11fde0858ae9b439b000b93a49f
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
