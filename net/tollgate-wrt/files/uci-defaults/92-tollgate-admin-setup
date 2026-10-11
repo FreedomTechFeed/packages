@@ -266,24 +266,6 @@ else
     # ...and the derived hop goes with them: a section with no TLS listener has
     # nothing a redirect could land on.
     uci -q delete uhttpd.admin.redirect_https
-
-    # Fallback so the operator is never locked out of BOTH admin UIs. If this
-    # feed announced the board mapping early (91-tollgate-admin-ui-mode -- which
-    # runs BEFORE the module's 99), then 99 placed LuCI on the SECONDARY pair,
-    # expecting the board to own the entry pair. With the board refused here,
-    # that would leave the ENTRY pair with no admin UI at all. Put LuCI back on
-    # the entry pair and drop the mapping marker, so a router that could not
-    # establish a credential still answers on :8080/:443 with LuCI.
-    rm -f "$TOLLGATE_ENTRY_UI_MARKER" 2>/dev/null
-    if uci -q get uhttpd.main >/dev/null 2>&1; then
-        uci -q delete uhttpd.main.listen_http
-        uci -q delete uhttpd.main.listen_https
-        uci add_list uhttpd.main.listen_http="0.0.0.0:8080"
-        uci add_list uhttpd.main.listen_http="[::]:8080"
-        uci add_list uhttpd.main.listen_https="0.0.0.0:443"
-        uci add_list uhttpd.main.listen_https="[::]:443"
-        uci commit uhttpd
-    fi
 fi
 uci set uhttpd.admin.ubus_prefix='/ubus'
 uci set uhttpd.admin.script_timeout='60'
