@@ -482,7 +482,22 @@ PKG_NAME:=tollgate-wrt
 #     first-run page that sets root + private-WiFi; rpcd + ACL re-vendored.
 #   * feed #71 (already on main) keeps LuCI on the secondary pair (early entry_ui
 #     announcer 91-tollgate-admin-ui-mode).
-PKG_VERSION:=0.6.0_rc1_pre29
+# pre30 ships the no-generated-credentials fix (M1):
+#   * the module pin moves to 7a1f8c39 -- the head of the
+#     fix/m1-no-generated-credentials branch (PR
+#     OpenTollGate/tollgate-module-basic-go#884), which STOPS generating a
+#     provisional admin credential: when root is unset and
+#     TOLLGATE_ADMIN_PASSWORD is unset the package now generates NOTHING and
+#     refuses to serve the board (fail closed), instead of creating a password
+#     the operator never chose. NOTE: PR #884 is blocked on a required
+#     approving review; this pin is the branch head, NOT main, so it MUST be
+#     moved to the merged main commit before the RC is cut.
+#   * the portal lock (c11e6053) and PKG_SOURCE_TAG are UNCHANGED: no portal
+#     content changed, and the pinned VERSION file is still v0.6.0-rc1.
+#   * pairs with tollgate-installer PR #105 (require the operator's admin +
+#     private-WiFi passwords; establish the admin password at step 4 rather
+#     than deferring it), the other half of the collision that stalled step 6.
+PKG_VERSION:=0.6.0_rc1_pre30
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -554,7 +569,9 @@ PKG_VERSION:=0.6.0_rc1_pre29
 # deliberately left alone: the tarball's own VERSION file is still
 # v0.6.0-alpha4 (Gate B enforces it on every run), and none of the four touches
 # portal content.
-PKG_SOURCE_VERSION:=67407a9655e960bb41c4e0c466a0b0e1d3a73c46
+# pre30 advances the pin to 7a1f8c39 -- the head of the
+# fix/m1-no-generated-credentials branch (#884; see the pre30 block above).
+PKG_SOURCE_VERSION:=7a1f8c39d67f7f302fc47dee85a428a5890614a7
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -669,8 +686,12 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # carried across a pin move: Gate A below fails a moved pin whose hash was not
 # recalibrated, and this value comes from a fresh download of the NEW pin, not
 # from the outgoing one.
+# pre30 re-calibrated on its pin move: a fresh download of the 7a1f8c39
+# tarball yields
+# 9bf33aa619a94deff32a3e66db244bcb9395477a3bd62625a2abc43eee88ec6e -- the value
+# committed below (codeload reports 1868510 bytes for it).
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=2522b99b4ff3c7492380f613d4d079f039eff11fde0858ae9b439b000b93a49f
+PKG_HASH:=9bf33aa619a94deff32a3e66db244bcb9395477a3bd62625a2abc43eee88ec6e
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
