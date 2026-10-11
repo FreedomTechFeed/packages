@@ -482,23 +482,21 @@ PKG_NAME:=tollgate-wrt
 #     first-run page that sets root + private-WiFi; rpcd + ACL re-vendored.
 #   * feed #71 (already on main) keeps LuCI on the secondary pair (early entry_ui
 #     announcer 91-tollgate-admin-ui-mode).
-# pre31: the module reads the operator credential from a ROOT-ONLY FILE too.
-#   * apk-tools 3 (OpenWrt >= 25.12) does NOT forward the caller's environment
-#     to package scriptlets (measured on a GL-MT3000 / vanilla 25.12.5 /
-#     apk-tools 3.0.5: `TOLLGATE_ADMIN_PASSWORD=... apk add` reached the
-#     postinst with the var EMPTY), so the env-only credential path does not
-#     work on the apk lane. 99-tollgate-setup now also reads
-#     /etc/tollgate/admin-password (and /etc/tollgate/wifi-password), applies
-#     it, and removes it. The env still wins when present (opkg forwards it).
-#   * the module pin moves to 4475a16 -- the head of felixfelix-bot's
-#     fix/m1-no-generated-credentials (PR OpenTollGate/tollgate-module-basic-go#896),
-#     which carries pre30's M1 change PLUS the file fallback. The commit is
-#     reachable from the OpenTollGate codeload URL (shared fork network; same
-#     tarball hash verified), so PKG_SOURCE_URL is unchanged.
-#   * PR #896 is blocked on a required approving review; this pins the branch
-#     head, NOT main, and MUST be moved to the merged main commit before the RC.
-#   * the portal lock (c11e6053) and PKG_SOURCE_TAG are UNCHANGED.
-PKG_VERSION:=0.6.0_rc1_pre31
+# RC1 (v0.6.0-rc1) -- the release candidate. The only content beyond pre31 is
+#   the PIN MOVE to the MERGED module main a2117251, replacing pre31's
+#   branch-head pin (4475a16): module #896 (never generate an admin credential)
+#   and #897 (read the operator credential from a root-only file too, because
+#   apk-tools 3 does not forward the environment to package scriptlets) are both
+#   on main now. PKG_HASH moves WITH the pin; the portal lock (c11e6053) and
+#   PKG_SOURCE_TAG (v0.6.0-rc1) are deliberately UNCHANGED.
+#   PKG_VERSION is 0.6.0_rc1 -- the pre-release line was 0.6.0_rc1_preN and
+#   0.6.0_rc1_preN < 0.6.0_rc1 (see the ordering comment above), so a device on
+#   pre31 upgrades to rc1 normally.
+#   Verified live before this cut (GL-MT3000): apk 25.12.5 + root-only file ->
+#   board served; apk + no credential -> board refused (fail closed); opkg
+#   24.10.8 + TOLLGATE_ADMIN_PASSWORD env -> board served; tollgate-installer
+#   rc19 vs pre31 -> step 4 set the supplied password, no stall, board served.
+PKG_VERSION:=0.6.0_rc1
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -570,9 +568,8 @@ PKG_VERSION:=0.6.0_rc1_pre31
 # deliberately left alone: the tarball's own VERSION file is still
 # v0.6.0-alpha4 (Gate B enforces it on every run), and none of the four touches
 # portal content.
-# pre31 advances the pin to 4475a16 -- the head of felixfelix-bot's
-# fix/m1-no-generated-credentials branch (#896; see the pre31 block above).
-PKG_SOURCE_VERSION:=4475a16e703eb6dc4d0ff87557e0038c745d800e
+# RC1 advances the pin to a2117251 -- the MERGED module main (PRs #896 + #897).
+PKG_SOURCE_VERSION:=a2117251025ea7ccbc4d629faf2d48da1c1494b2
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -687,13 +684,12 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # carried across a pin move: Gate A below fails a moved pin whose hash was not
 # recalibrated, and this value comes from a fresh download of the NEW pin, not
 # from the outgoing one.
-# pre31 re-calibrated on its pin move: a fresh download of the 4475a16
-# tarball yields
-# 250f8e0448d804d47164a7b59ae4992a92b7ffd95762824086952da3468032cb -- the value
-# committed below (the same hash from the OpenTollGate codeload URL, since the
-# commit is reachable through the shared fork network).
+# RC1 re-calibrated on its pin move: a fresh download of the a2117251 tarball
+# yields
+# 60a8a10dcb6870c8d0641325f463e3316fdf27f96d15a6eb784fb7f497e9eebd -- the value
+# committed below (codeload reports 1873103 bytes for it).
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=250f8e0448d804d47164a7b59ae4992a92b7ffd95762824086952da3468032cb
+PKG_HASH:=60a8a10dcb6870c8d0641325f463e3316fdf27f96d15a6eb784fb7f497e9eebd
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
