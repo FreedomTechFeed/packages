@@ -158,7 +158,7 @@ fi
 # installed NAMES sorted byte-wise ARE the boot order. Judge the SAME predicate
 # against that order. This is the check the pre-fix tree fails: the boot glob
 # carried 92, before the credential.
-BOOT_ORDER=$(printf '%s\n' "90-tollgate-captive-portal-symlink" "$CRED_NAME" "$GATE" | LC_ALL=C sort)
+BOOT_ORDER=$(printf '%s\n' "90-tollgate-captive-portal-symlink" "91-tollgate-admin-ui-mode" "$CRED_NAME" "$GATE" | LC_ALL=C sort)
 if [ -n "$GATE" ]; then
     VIOL=$(printf '%s\n' "$BOOT_ORDER" | order_violation "$GATE")
     if [ -z "$VIOL" ]; then
@@ -166,6 +166,19 @@ if [ -n "$GATE" ]; then
     else
         fail "Gate C: boot order violates gate-last -- $VIOL"
     fi
+fi
+
+# --- Gate E: the entry_ui mapping is announced BEFORE the module's 99 --------
+# 99-tollgate-setup resolves board-vs-luci from /etc/tollgate/entry-ui-mapping;
+# 91-tollgate-admin-ui-mode is what writes it (early, before 99). If it were
+# missing, or sorted AFTER 99, then 99 would resolve `luci` and put LuCI on the
+# entry pair, which the gate then strips -- the pre28 listenerless-LuCI finding.
+MAP_NAME="91-tollgate-admin-ui-mode"
+if grep -q "files/uci-defaults/$MAP_NAME" "$MK" 2>/dev/null && \
+   [ "$(printf '%s\n' "$MAP_NAME" "$CRED_NAME" | LC_ALL=C sort | head -1)" = "$MAP_NAME" ]; then
+    ok "Gate E: the entry_ui mapping announcer ($MAP_NAME) is installed and sorts before $CRED_NAME"
+else
+    fail "Gate E: the entry_ui mapping announcer ($MAP_NAME) is not installed, or does not sort before $CRED_NAME -- 99 would resolve luci and LuCI would be stripped to no listeners"
 fi
 
 # --- Gate D: the vendored source keeps its upstream name --------------------

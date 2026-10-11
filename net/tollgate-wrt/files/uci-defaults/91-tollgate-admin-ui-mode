@@ -1,0 +1,34 @@
+#!/bin/sh
+# Announce the entry_ui mapping to the module's 99-tollgate-setup EARLY.
+#
+# WHY THIS EXISTS (the pre28 bench finding). The install/boot order is
+# 90 -> 99 -> 999: 99-tollgate-setup (module) writes uhttpd.main (LuCI) and
+# resolves board-vs-luci from /etc/tollgate/entry-ui-mapping, which the board's
+# 92-tollgate-admin-setup (installed as 999) writes. On a FRESH install 99 runs
+# BEFORE 999, so it saw no marker, resolved `luci`, and put LuCI on the ENTRY
+# pair (:8080 + :443); 999 then gave the board the entry pair and stripped it
+# from uhttpd.main -- leaving LuCI with NO listeners (measured: :8090/:8443 and
+# :443 both dead). Writing the marker HERE, at 91, before 99 runs, makes both
+# halves resolve the SAME mapping: 99 puts LuCI on the SECONDARY pair and
+# 92/999 binds the board on the ENTRY pair. Run order no longer decides the map.
+#
+# This is the FEED half of the D4 contract (the same value 92/999 read): the
+# module's 99 honours entry_ui=board ONLY while this marker carries `board`, so
+# a feed without this script still repairs to the legacy `luci` mapping.
+#
+# It only ANNOUNCES a mapping; it binds no ports and touches no uhttpd section.
+TOLLGATE_CONFIG_JSON="${TOLLGATE_CONFIG_JSON:-/etc/tollgate/config.json}"
+TOLLGATE_ENTRY_UI_MARKER="${TOLLGATE_ENTRY_UI_MARKER:-/etc/tollgate/entry-ui-mapping}"
+
+value=board
+if [ -r "$TOLLGATE_CONFIG_JSON" ] && command -v jq >/dev/null 2>&1; then
+    v=$(jq -r '.entry_ui // empty' "$TOLLGATE_CONFIG_JSON" 2>/dev/null) || v=""
+    case "$v" in
+        board|luci) value="$v" ;;
+        *)          value=board ;;
+    esac
+fi
+
+mkdir -p "$(dirname "$TOLLGATE_ENTRY_UI_MARKER")" 2>/dev/null || true
+printf '%s\n' "$value" > "$TOLLGATE_ENTRY_UI_MARKER" 2>/dev/null || true
+exit 0

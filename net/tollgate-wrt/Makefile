@@ -862,14 +862,19 @@ wait_for_iface() {
 	return 1
 }
 
-# Run the three uci-defaults scripts the package just installed, in the SAME
-# order the module's own packaging does: captive-portal symlink (90), credential
-# setup (99), then the fail-closed admin gate LAST (999). The gate refuses to
-# serve the admin board unless it can find a credential, so it MUST run after
-# 99-tollgate-setup has created one -- running it first on a fresh flash fails
-# closed and locks the operator out. This list names INSTALLED paths, so it must
-# track 999-tollgate-admin-setup in Package/tollgate-wrt/install below.
+# Run the uci-defaults scripts the package just installed, in the SAME order the
+# module's own packaging does: captive-portal symlink (90), the entry_ui mapping
+# announcement (91), credential setup (99), then the fail-closed admin gate LAST
+# (999). The gate refuses to serve the admin board unless it can find a
+# credential, so it MUST run after 99-tollgate-setup has created one -- running
+# it first on a fresh flash fails closed and locks the operator out. And 91 MUST
+# run before 99: 99 resolves board-vs-luci from /etc/tollgate/entry-ui-mapping,
+# so without the early announcement it resolves `luci`, puts LuCI on the entry
+# pair, and the gate (999) then strips that pair to hand it to the board --
+# leaving LuCI listenerless (the pre28 bench finding). This list names INSTALLED
+# paths, so it must track the install recipe below.
 for script in /etc/uci-defaults/90-tollgate-captive-portal-symlink \
+              /etc/uci-defaults/91-tollgate-admin-ui-mode \
               /etc/uci-defaults/99-tollgate-setup \
               /etc/uci-defaults/999-tollgate-admin-setup; do
 	if [ -x "$$script" ]; then
@@ -931,6 +936,12 @@ define Package/tollgate-wrt/install
 
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/uci-defaults/90-tollgate-captive-portal-symlink $(1)/etc/uci-defaults/
+	# The early entry_ui mapping announcer is FEED-owned (not the module
+	# tarball): it exists so 99-tollgate-setup, which runs BEFORE the board's
+	# 92/999, resolves the same board-vs-luci mapping and puts LuCI on the
+	# secondary pair instead of the entry pair. See the file's header and
+	# test-uci-defaults-order.sh.
+	$(INSTALL_BIN) $(PKG_MAKEFILE_DIR)files/uci-defaults/91-tollgate-admin-ui-mode $(1)/etc/uci-defaults/
 	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/uci-defaults/99-tollgate-setup $(1)/etc/uci-defaults/
 	# 99-tollgate-setup ships with a literal __TOLLGATE_VERSION__ placeholder in
 	# SETUP_VERSION= and MUST be substituted at install time. Both of upstream's
