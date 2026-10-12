@@ -92,3 +92,10 @@ immediately. No code change required.
   immune only because `gh-action-sdk` mounts the whole repo. The workflow stage
   step copies `lang/golang` too, and the `paths:` trigger watches it — keep both
   in lockstep with that Makefile include.
+- **The context must also carry the CI-built portal bundles.** The install recipe
+  ships `files/tollgate-captive-portal-site/` and `files/tollgate-admin/`, which
+  are BUILD OUTPUT of the portal repo and are never committed (#335). The
+  workflow therefore runs `net/tollgate-wrt/scripts/build-portal-bundle.sh`
+  (with `actions/setup-node@v4`, node 22) BEFORE staging the context — mirroring
+  `release-publish.yml` / `multi-arch-test-build.yml`. Without it the install
+  recipe's `cp .../files/tollgate-captive-portal-site/.` fails.
