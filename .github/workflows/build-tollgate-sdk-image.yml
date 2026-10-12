@@ -80,6 +80,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The package's install recipe ships the captive-portal + admin SPAs, which
+      # are BUILD OUTPUT of OpenTollGate/tollgate-captive-portal-site and are
+      # never committed (build-in-CI rule #335). The working lanes stage them
+      # with build-portal-bundle.sh before the SDK build; this workflow must do
+      # the same, or the install recipe's `cp .../files/tollgate-captive-portal-site/.`
+      # fails with "No such file or directory" and the image build dies.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build + stage portal bundle
+        run: |
+          set -euo pipefail
+          bash net/tollgate-wrt/scripts/build-portal-bundle.sh
+
       - name: Stage the package tree into the build context
         run: |
           set -euo pipefail
@@ -91,6 +106,10 @@ jobs:
           # aborts with "please fix .../net/tollgate-wrt/Makefile". The
           # release-publish lane works only because gh-action-sdk mounts the
           # whole repo. Keep this in lockstep with that Makefile include.
+          #
+          # net/tollgate-wrt now also carries files/tollgate-captive-portal-site/
+          # and files/tollgate-admin/ from the portal-bundle step above; the
+          # recursive copy carries them into the context.
           mkdir -p .github/sdk-builder/feed/net .github/sdk-builder/feed/lang
           cp -r net/tollgate-wrt .github/sdk-builder/feed/net/tollgate-wrt
           cp -r lang/golang .github/sdk-builder/feed/lang/golang
