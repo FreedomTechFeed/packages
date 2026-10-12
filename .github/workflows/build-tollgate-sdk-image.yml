@@ -34,6 +34,7 @@ on:
       - ".github/sdk-builder/**"
       - ".github/workflows/build-tollgate-sdk-image.yml"
       - "net/tollgate-wrt/Makefile"
+      - "lang/golang/**"
   schedule:
     - cron: "0 3 * * 0"
 
@@ -83,8 +84,16 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf .github/sdk-builder/feed
-          mkdir -p .github/sdk-builder/feed/net
+          # net/tollgate-wrt/Makefile does
+          #   include ../../lang/golang/golang-package.mk
+          # (the sibling that exists in the openwrt/packages layout), so the
+          # trimmed feed context must carry lang/golang too or the package scan
+          # aborts with "please fix .../net/tollgate-wrt/Makefile". The
+          # release-publish lane works only because gh-action-sdk mounts the
+          # whole repo. Keep this in lockstep with that Makefile include.
+          mkdir -p .github/sdk-builder/feed/net .github/sdk-builder/feed/lang
           cp -r net/tollgate-wrt .github/sdk-builder/feed/net/tollgate-wrt
+          cp -r lang/golang .github/sdk-builder/feed/lang/golang
 
       - name: Remove unused Android SDK, .NET, Swift, GHC
         run: |
