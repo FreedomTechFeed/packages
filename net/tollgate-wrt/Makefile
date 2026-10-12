@@ -496,7 +496,15 @@ PKG_NAME:=tollgate-wrt
 #   board served; apk + no credential -> board refused (fail closed); opkg
 #   24.10.8 + TOLLGATE_ADMIN_PASSWORD env -> board served; tollgate-installer
 #   rc19 vs pre31 -> step 4 set the supplied password, no stall, board served.
-PKG_VERSION:=0.6.0_rc1
+#
+#   v0.6.0-rc2 is the PIN MOVE to the merged module main f89c879, on top of
+#   rc1's a2117251: module #902 (the package never SETS a credential — admin or
+#   private-WiFi — it only ascertains one and leaves the private AP DISABLED
+#   until a passphrase is set) and #903 (VERSION v0.6.0-rc2). PKG_SOURCE_TAG
+#   moves with the tarball's VERSION (v0.6.0-rc1 -> v0.6.0-rc2); PKG_HASH moves
+#   WITH the pin; the portal lock (c11e6053) is UNCHANGED. PKG_VERSION is
+#   0.6.0_rc2, so 0.6.0_rc2 > 0.6.0_rc1 and an rc1 device upgrades normally.
+PKG_VERSION:=0.6.0_rc2
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -569,7 +577,7 @@ PKG_VERSION:=0.6.0_rc1
 # v0.6.0-alpha4 (Gate B enforces it on every run), and none of the four touches
 # portal content.
 # RC1 advances the pin to a2117251 -- the MERGED module main (PRs #896 + #897).
-PKG_SOURCE_VERSION:=a2117251025ea7ccbc4d629faf2d48da1c1494b2
+PKG_SOURCE_VERSION:=f89c879adf7c51f6815b627333bd81b1be230ab2
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -592,7 +600,7 @@ PKG_SOURCE_VERSION:=a2117251025ea7ccbc4d629faf2d48da1c1494b2
 # writes a setup marker no upstream build writes, and an unchanged marker sends
 # an upgrade down 99-tollgate-setup's same-version path where the new full-setup
 # work never runs.
-PKG_SOURCE_TAG:=v0.6.0-rc1
+PKG_SOURCE_TAG:=v0.6.0-rc2
 # Short SHA for that human-facing version string; the full SHA stays in
 # GitCommit, which is what a bug report should quote.
 PKG_SOURCE_SHA7:=$(shell printf '%s' $(PKG_SOURCE_VERSION) | cut -c1-7)
@@ -689,7 +697,7 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # 60a8a10dcb6870c8d0641325f463e3316fdf27f96d15a6eb784fb7f497e9eebd -- the value
 # committed below (codeload reports 1873103 bytes for it).
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=60a8a10dcb6870c8d0641325f463e3316fdf27f96d15a6eb784fb7f497e9eebd
+PKG_HASH:=857eeead37eab20545f858099387d5cf90972a461d267bbdba4c2c07ef242be5
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
