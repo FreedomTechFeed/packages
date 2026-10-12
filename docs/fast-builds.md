@@ -84,3 +84,11 @@ immediately. No code change required.
   compatible in one tree.
 - Rebuild the image whenever `net/tollgate-wrt/Makefile`'s pin changes; the
   weekly schedule and the `paths:` trigger cover the pin move automatically.
+- **The build context must carry `lang/golang` as well as `net/tollgate-wrt`.**
+  `net/tollgate-wrt/Makefile` does `include ../../lang/golang/golang-package.mk`
+  (the sibling in the openwrt/packages layout), so a context trimmed to
+  `net/tollgate-wrt` alone makes the package scan abort with
+  `please fix feeds/tollgate/net/tollgate-wrt/Makefile`. The release lane is
+  immune only because `gh-action-sdk` mounts the whole repo. The workflow stage
+  step copies `lang/golang` too, and the `paths:` trigger watches it — keep both
+  in lockstep with that Makefile include.
