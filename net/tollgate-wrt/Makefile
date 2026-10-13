@@ -511,7 +511,20 @@ PKG_NAME:=tollgate-wrt
 #   operator is told to `passwd root` and retry). PKG_SOURCE_TAG moves with the
 #   tarball's VERSION (v0.6.0-rc2 -> v0.6.0-rc3); PKG_HASH moves WITH the pin; the
 #   portal lock (c11e6053) is UNCHANGED. PKG_VERSION is 0.6.0_rc3.
-PKG_VERSION:=0.6.0_rc3
+#
+#   v0.6.0-rc4 is the PIN MOVE to the merged module main 8a5c8b38: module #913
+#   REVERSES rc3's refusal. The package now SETS a FIXED DEFAULT credential
+#   (`TollGate`) on root when none exists and marks it PROVISIONAL, and sets the
+#   private (management) WiFi key to the same default and ENABLES the AP (rc2/rc3
+#   left it disabled). The admin/config UI then forces the owner to choose their
+#   own credentials at first login (a separate, post-release portal change). A
+#   fixed default is never a random one — a value the owner cannot know is the
+#   lockout this work exists to prevent. The package still accepts NO install-time
+#   credential, preserves an owner's own, and still fails CLOSED if the default
+#   write cannot take. PKG_SOURCE_TAG moves with the tarball's VERSION
+#   (v0.6.0-rc3 -> v0.6.0-rc4); PKG_HASH moves WITH the pin; the portal lock
+#   (c11e6053) is UNCHANGED. PKG_VERSION is 0.6.0_rc4.
+PKG_VERSION:=0.6.0_rc4
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -584,7 +597,9 @@ PKG_VERSION:=0.6.0_rc3
 # v0.6.0-alpha4 (Gate B enforces it on every run), and none of the four touches
 # portal content.
 # RC1 advances the pin to a2117251 -- the MERGED module main (PRs #896 + #897).
-PKG_SOURCE_VERSION:=27baf22fcbebc666a8e404bd4000a08426327870
+# RC2 advances it to f89c879, RC3 to 27baf22, and RC4 to 8a5c8b38 -- the MERGED
+# module main after #913 (the fixed-default-credential reversal).
+PKG_SOURCE_VERSION:=8a5c8b385bdde48a640341d553e044ff40a398d7
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -607,7 +622,7 @@ PKG_SOURCE_VERSION:=27baf22fcbebc666a8e404bd4000a08426327870
 # writes a setup marker no upstream build writes, and an unchanged marker sends
 # an upgrade down 99-tollgate-setup's same-version path where the new full-setup
 # work never runs.
-PKG_SOURCE_TAG:=v0.6.0-rc3
+PKG_SOURCE_TAG:=v0.6.0-rc4
 # Short SHA for that human-facing version string; the full SHA stays in
 # GitCommit, which is what a bug report should quote.
 PKG_SOURCE_SHA7:=$(shell printf '%s' $(PKG_SOURCE_VERSION) | cut -c1-7)
@@ -703,8 +718,12 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # yields
 # 60a8a10dcb6870c8d0641325f463e3316fdf27f96d15a6eb784fb7f497e9eebd -- the value
 # committed below (codeload reports 1873103 bytes for it).
+# RC4 re-calibrated on its pin move: a fresh download of the 8a5c8b38 tarball
+# yields
+# 1a391ca26b41acf921d22ef4f87758c1c701553b3bbaad2326b5562269e51a86 -- the value
+# committed below (codeload reports 1877402 bytes for it).
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=26a2e7f0ce9e4859b3a9e4721c1f73e54d82dc4c636677b340a86540e8ade7df
+PKG_HASH:=1a391ca26b41acf921d22ef4f87758c1c701553b3bbaad2326b5562269e51a86
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
@@ -848,24 +867,13 @@ define Package/tollgate-wrt/preinst
 
 [ -n "$${IPKG_INSTROOT:-}" ] && exit 0
 
-# Refuse the install when root has NO password: the :8090 admin board's login is
-# checked against root's /etc/shadow hash, and rpcd's session.login accepts ANY
-# password while that hash is empty. The package never sets a credential, so a
-# password-less install would leave an unauthenticatable board. The preinst runs
-# BEFORE the package is unpacked, so a non-zero exit here refuses cleanly (no
-# half-installed files). Mirrors the module's own preinst. Dependency-free (no
-# jq), allows a locked root, and bypasses on TOLLGATE_ALLOW_EMPTY_ROOT=1 (used by
-# the CI "Test via Docker container" lane, whose root is empty).
-[ "$${TOLLGATE_ALLOW_EMPTY_ROOT:-0}" = "1" ] && exit 0
-_SHADOW="$${SHADOW_FILE:-/etc/shadow}"
-_root_hash="$$(awk -F: '$$1 == "root" { print $$2; exit }' "$$_SHADOW" 2>/dev/null)"
-if [ -z "$$_root_hash" ]; then
-	printf '%s\n' "ERROR: root has no password — refusing to install tollgate-wrt." \
-		"       The admin board's login is checked against root's /etc/shadow" \
-		"       hash, and rpcd accepts ANY password while it is empty. Set one" \
-		"       with 'passwd root' (or the LuCI password page), then install again." >&2
-	exit 1
-fi
+# No credential gate here any more. rc3 REFUSED to install when root had no
+# password (the :8090 board's login is checked against root's /etc/shadow hash,
+# and rpcd accepts ANY password while it is empty). rc4 reverses that: the
+# package's 99-tollgate-setup sets a FIXED default (`TollGate`) on root when none
+# exists and marks it PROVISIONAL, and the admin/config UI forces a change at
+# first login — so a password-less install is never left unauthenticatable and
+# never locks the operator out. Mirrors the module's own preinst (now a no-op).
 
 # Record the install timestamp so the captive portal / wizard can show it.
 if [ -f /etc/tollgate/install.json ]; then
