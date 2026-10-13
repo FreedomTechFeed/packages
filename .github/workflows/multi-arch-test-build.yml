@@ -437,10 +437,10 @@ jobs:
       # exists. Gate E of net/tollgate-wrt/test-feed-ci.sh asserts the scope of
       # this hatch and the presence of this reminder, so the removal is a visible
       # change rather than a silently forgotten one.
-      # The runtime container's root has no password, and the package's preinst
-      # now REFUSES to install on that (see #907) — the documented
-      # TOLLGATE_ALLOW_EMPTY_ROOT=1 hatch bypasses the refusal for this smoke
-      # install only. A real router install still requires a root password.
+      # The runtime container's root has no password. rc4's package SETS a FIXED
+      # default (`TollGate`) on root when none exists (#913) and no longer refuses
+      # the install on an empty hash, so the TOLLGATE_ALLOW_EMPTY_ROOT hatch that
+      # rc3 needed is gone.
       - name: Test via Docker container
         if: ${{ matrix.runtime_test && fromJSON(env.HAVE_PKGS) && steps.runtime_image.outputs.available == 'true' }}
         continue-on-error: true
@@ -449,7 +449,6 @@ jobs:
             -e ENABLE_GENERIC_TESTS=true \
             -e FORCE_GENERIC_TESTS=true \
             -e PKG_MANAGER=${{ env.PKG_MANAGER }} \
-            -e TOLLGATE_ALLOW_EMPTY_ROOT=1 \
             --platform linux/${{ matrix.arch }} \
             --rm \
             --volume $GITHUB_WORKSPACE:/ci \
