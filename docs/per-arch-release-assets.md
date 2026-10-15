@@ -11,29 +11,77 @@ URLs so the correct binary is fetched for the detected router arch.
 Each release asset is named:
 
 ```
-tollgate-wrt_<PKG_VERSION>_<arch>.apk
-tollgate-wrt_<PKG_VERSION>_<arch>.ipk
+tollgate-wrt_<PKG_VERSION>_<arch>-<target>.apk
+tollgate-wrt_<PKG_VERSION>_<arch>-<target>.ipk
 ```
 
-`PKG_VERSION` is read from `net/tollgate-wrt/Makefile` (e.g. `0.6.0_alpha1`),
-`<arch>` is the canonical OpenWrt arch tuple. Example:
+`PKG_VERSION` is read from `net/tollgate-wrt/Makefile` (e.g. `0.6.0_rc6`),
+`<arch>` is the canonical OpenWrt arch tuple and `<target>` the OpenWrt
+target (`mediatek-filogic`, `ath79-generic`, `ath79-nand`, …). Example:
 
 ```
-tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.apk
-tollgate-wrt_0.6.0_alpha1_aarch64_cortex-a53.ipk
+tollgate-wrt_0.6.0_rc6_aarch64_cortex-a53-mediatek-filogic.apk
+tollgate-wrt_0.6.0_rc6_aarch64_cortex-a53-mediatek-filogic.ipk
 ```
+
+### Why the target is in the name (2026-10-15, Option A)
+
+The target slot is **load-bearing, not decoration**: one CPU arch can serve
+several OpenWrt targets. `mips_24kc` is both `ath79/generic` (AR300M `-lite`,
+`-16`) and `ath79/nand` (AR300M `-nor`, `-nand`), so an arch-only name
+(`tollgate-wrt_<ver>_mips_24kc.apk`) made those two release rows **collide on a
+single asset name** — which is why one of them had to stay parked.
+
+With the target appended both rows publish at once, and the installer can resolve
+the asset for the target the router actually reports
+(`internal/app/arch.go`, `feedAssetURL(arch, target, ext)`).
+
+**Ordering caveat (do not skip):** the installer-side threading of the target is
+its own change (card *t_5066bf78*), not part of the feed lane. Until it lands,
+the installer still derives an arch-only URL and every install 404s against a
+target-qualified release — the feed's name is correct, but the two halves have to
+ship together. Tag the next release only once both are in. `net/tollgate-wrt/test-feed-ci.sh`
+**Gate C** refuses an arch-only name (with negative controls), so the
+disambiguation cannot be dropped again by accident.
+
+One shape, one source: `release-assets.py` owns both names
+(`package_asset()` / `bundle_asset()`), and **both** consumers derive from it
+rather than re-typing the shape — `release-publish.yml` for the staged package
+name (`package-name`), and `offline-bundle.py` for the bundle name (it imports
+the module and calls `bundle_asset()`; the `bundle-name` subcommand is the same
+function on the CLI). A name that disagreed with the expected set would fail the
+publish job at the far end of a 45-minute build, or — worse — publish a bundle
+the signed manifest never covered.
+
+`Gate C` asserts the derive-don't-retype half for the package name, and refuses a
+hand-typed `tollgate-wrt-<version>-…` bundle name in the release workflow; the
+bundle assembler's own name is pinned to `bundle-asset()` by
+`offline-bundle-test.sh` (which also proves the name CHANGES with the target, so
+a name that ignored the target could not pass).
 
 ## Which arches are published
 
-The feed ships exactly the arches the club runs (operator call, 2026-10-08):
+The feed ships every historically-supported arch (operator call, 2026-10-15:
+widen the matrix so the review club can test against a wide range of routers).
+As of rc6 the release matrix carries **8 arch/target pairs**, each in **apk**
+(OpenWrt 25.12) and **ipk** (24.10) form:
 
-| arch tuple            | target             | club device                    |
-|-----------------------|--------------------|--------------------------------|
-| `aarch64_cortex-a53`  | `mediatek-filogic` | GL-MT3000, GL-MT6000 (bench)   |
-| `mips_24kc`           | `ath79-generic`    | GL.iNet AR300M family          |
+| arch tuple              | target             | device / role                        |
+|-------------------------|--------------------|--------------------------------------|
+| `aarch64_cortex-a53`    | `mediatek-filogic` | GL-MT3000, GL-MT6000 (bench)         |
+| `mips_24kc`             | `ath79-generic`    | GL.iNet AR300M `-lite`, `-16`        |
+| `mips_24kc`             | `ath79-nand`       | GL.iNet AR300M `-nor`, `-nand`       |
+| `aarch64_cortex-a72`    | `bcm27xx-bcm2711`  | Raspberry Pi 4 family                |
+| `arm_cortex-a7`         | `bcm27xx-bcm2709`  | Raspberry Pi 2 family                |
+| `mipsel_24kc`           | `mt7621`           | MT7621 routers                       |
+| `mips64_octeonplus`     | `octeon-generic`   | Octeon boards                        |
+| `x86_64`                | `x86-64`           | x86 VMs / boxes                      |
 
-Both are published in **apk** (OpenWrt 25.12) and **ipk** (24.10) form, and both
-have a WAN-less offline bundle.
+Every apk-lane arch has a WAN-less offline bundle. `mips_24kc` carries **two**
+targets at once — the deliverable of the target-qualified naming change (Option
+A): with arch-only names `ath79-generic` and `ath79-nand` collided on one asset
+name, which is why the NAND row used to be parked; card **t2** un-parked it once
+naming landed.
 
 ### GL.iNet AR300M variants
 
@@ -47,23 +95,25 @@ determines the OpenWrt target:
 | `glinet_gl-ar300m-nor` | `ath79/nand` |
 | `glinet_gl-ar300m-nand` | `ath79/nand` |
 
-These are alternatives, not four simultaneously shippable rows: the shared
-arch would make the per-arch asset name collide. To identify a club unit,
-read `/tmp/sysinfo/board_name` on the router; `ubus call system board` also
-prints the model. If the club set moves to NAND, repoint Gate D's hardcoded
-`CLUB` list in `net/tollgate-wrt/test-feed-ci.sh` and the matching
+Both targets can be live at the same time: the asset name carries the target, so
+the two rows no longer collide (this was the pre-2026-10-15 blocker). To
+identify a club unit, read `/tmp/sysinfo/board_name` on the router; `ubus call
+system board` also prints the model. If the club set moves to NAND, repoint Gate
+D's hardcoded `CLUB` list in `net/tollgate-wrt/test-feed-ci.sh` and the matching
 `OFFLINE_BUNDLES` row together, or the gates will assert the wrong target.
 
 ### Parked arches
 
-`aarch64_cortex-a72`, `arm_cortex-a7`, `mipsel_24kc`, `mips64_octeonplus` and
-`x86_64` are **parked, not deleted**: their rows are comment lines inside
-`RELEASES` in `.github/workflows/scripts/release-assets.py`. Uncomment a row to
-restore it — the exact tuple/target/SDK/ext values are preserved so it is a
-one-line edit. Two gates keep this honest (`test-feed-ci.sh`): **Gate D** fails
-if a club arch loses its `.apk` row or its offline bundle, and **Gate K** fails
-if a parked row is no longer a paste-back-able 4-tuple. Gate J additionally
-requires every release-lane arch to keep an active-or-parked row in the PR
+`aarch64_generic` / `armsr-armv8` (the generic ARM SystemReady target, never a
+club device) is **parked, not deleted**: its rows are comment lines inside
+`RELEASES` in `.github/workflows/scripts/release-assets.py`. Uncomment both rows
+(and add its `OFFLINE_BUNDLES` row + its PR-matrix row) to restore it — the exact
+tuple/target/SDK/ext values are preserved so it is a one-line edit. Two gates keep this honest (`test-feed-ci.sh`): **Gate D** fails
+if a club **arch/target pair** loses its `.apk` row or its offline bundle, and
+**Gate K** fails if a parked row is no longer a paste-back-able 4-tuple (or if
+any of its four fields was emptied — the target field included: a restored row
+would then publish a malformed name). Gate J additionally requires every
+release-lane arch/**target pair** to keep an active-or-parked row in the PR
 workflow matrix.
 
 Note that the installer derives its download URL from the arch tuple rather than
@@ -161,27 +211,39 @@ The module repo does build a `mips_24kc` compressed variant
 cover `--fast`, `--best` and `--brute`; `.ipk` only), so the artifact exists for
 mips — it is simply not a release asset here.
 
-### Offline (WAN-less) bundles are per-arch, not per-device
+### Offline (WAN-less) bundles are per-(arch, target), not per-device
 
-The offline bundle is named `tollgate-wrt-<PKG_VERSION>-<arch>-offline.tar.gz`
-and there is exactly one per arch. `release-assets.py`'s `OFFLINE_BUNDLES` table
-and the `release-tooling.yml` self-test both assert that the bundle build matrix
-has one entry per expected bundle asset name, and the installer wizard's
-`tollgateArchAssets` map fetches the bundle by arch. A second bundle for a single
-device would collide with that arch's existing bundle name, so no per-device
-bundle entry is added.
+The offline bundle is named
+`tollgate-wrt-<PKG_VERSION>-<arch>-<target>-offline.tar.gz` and there is exactly
+one per (arch, target) row. `release-assets.py`'s `OFFLINE_BUNDLES` table and
+the `release-tooling.yml` self-test both assert that the bundle build matrix has
+one entry per expected bundle asset name, and the installer wizard's
+`tollgateArchAssets` map fetches the bundle by arch + target.
+
+The target is part of the **name** because the closure itself is resolved
+against the **target's** indexes: an `ath79-generic` bundle is not
+interchangeable with an `ath79-nand` one. An arch-only name would make those two
+mips_24kc bundles collide. A second bundle for a single device would likewise
+collide with its arch/target's existing bundle name, so no per-device bundle
+entry is added.
 
 A device is still a real input to the bundle: the `profile` column of
 `OFFLINE_BUNDLES` (passed to `offline-bundle.py --profile`) names the
 `profiles.json` profile whose `device_packages` are assumed to already be in the
 base image.
 
-`OFFLINE_BUNDLES` currently carries two rows:
+`OFFLINE_BUNDLES` carries one row per apk-lane (arch, target). The two that pin
+a real club profile:
 
 - `aarch64_cortex-a53` / `mediatek-filogic` / `25.12.5`, profile
   `glinet_gl-mt3000`, `apk`
 - `mips_24kc` / `ath79-generic` / `25.12.5`, profile `glinet_gl-ar300m-lite`,
   `apk`
+
+plus `mips_24kc` / `ath79-nand` (profile `glinet_gl-ar300m-nor`, the NAND-lane
+sibling), and the rc6 widening rows (`aarch64_cortex-a72`, `arm_cortex-a7`,
+`mipsel_24kc`, `mips64_octeonplus`, `x86_64`), which use profile `""` (assume
+`default_packages` only — the safe, strictly-more direction).
 
 The `aarch64_cortex-a53` bundle assumes `glinet_gl-mt3000`, whose
 `device_packages` (`kmod-mt7915e`, `kmod-mt7981-firmware`, `mt7981-wo-firmware`,
@@ -283,11 +345,18 @@ The harness asserts:
 
 1. The build matrix references `aarch64_cortex-a53`/`mediatek-filogic`.
 2. A release/tag-triggered workflow uploads per-arch assets.
-3. The deterministic `tollgate-wrt_<version>_<arch>` naming pattern is
-   encoded.
-4. (Gate D) The club device set stays shippable: each club arch
+3. (Gate C) Deterministic **target-qualified** naming: every matrix row's
+   `tollgate-wrt_<ver>_<arch>-<target>.<ext>` is in the expected asset set and no
+   row's arch-only name is; two rows sharing one arch (the two AR300M targets on
+   `mips_24kc`) resolve to different names; and the release workflow **derives**
+   the staged name from `release-assets.py` rather than re-typing it. Negative
+   controls: arch-only `package_asset()` / `bundle_asset()` / a re-typed name.
+4. (Gate D) The club device set stays shippable: each club arch/**target** pair
    (`aarch64_cortex-a53` / `mediatek-filogic`, `mips_24kc` / `ath79-generic`)
    keeps both its literal `.apk` release row and its WAN-less offline bundle.
-5. (Gate J) Every release-lane arch keeps an active-or-parked row in the PR
-   build workflow, so parking can never hide the restore path.
-6. (Gate K) Every parked release row is still a paste-back-able 4-tuple.
+   Negative controls: the `.apk` row deleted; the row repointed to the other
+   target.
+5. (Gate J) Every release-lane arch/**target pair** keeps an active-or-parked
+   row in the PR build workflow, so parking can never hide the restore path.
+6. (Gate K) Every parked release row is still a paste-back-able 4-tuple with no
+   blank field.

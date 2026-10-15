@@ -90,14 +90,14 @@ jobs:
       # is always still shipped by the release lane -- parking can never
       # become "this arch silently vanishes".
       #   {"arch": "aarch64_generic", "target": "armsr-armv8", "runtime_test": true},
-      #   {"arch": "mips_24kc", "target": "ath79-nand", "runtime_test": true},
       # ------------------------------------------------------------------
       # WIDENED 2026-10-15: aarch64_cortex-a72, arm_cortex-a7, mipsel_24kc and
       # mips64_octeonplus are ACTIVE again (release-assets.py RELEASES), so the
       # review club can test against a wide range of routers. aarch64_generic is
-      # still parked (a compile-coverage arch that has never been a release row);
-      # mips_24kc/ath79-nand stays parked because it collides with the
-      # ath79-generic mips_24kc row (same asset name).
+      # still parked (a compile-coverage arch that has never been a release row).
+      # mips_24kc/ath79-nand is ACTIVE as of 2026-10-15 (card t2):
+      # target-qualified asset names (Option A) removed the collision with the
+      # ath79-generic row.
       # ACTIVE rows. DATED NOTE (2026-10-10, from the review of #59):
       # aarch64_cortex-a53 / mediatek-filogic is the GL-MT6000 BENCH arch and an
       # ACTIVE row here, but upstream does NOT publish
@@ -121,6 +121,7 @@ jobs:
           {"arch": "aarch64_cortex-a72", "target": "bcm27xx-bcm2711", "runtime_test": true},
           {"arch": "arm_cortex-a7", "target": "bcm27xx-bcm2709", "runtime_test": true},
           {"arch": "mips_24kc", "target": "ath79-generic", "runtime_test": true},
+          {"arch": "mips_24kc", "target": "ath79-nand", "runtime_test": true},
           {"arch": "mipsel_24kc", "target": "mt7621", "runtime_test": false},
           {"arch": "mips64_octeonplus", "target": "octeon-generic", "runtime_test": true},
           {"arch": "x86_64", "target": "x86-64", "runtime_test": true}

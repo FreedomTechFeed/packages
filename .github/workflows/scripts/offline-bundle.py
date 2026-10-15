@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""Build the per-arch OFFLINE dependency bundle for the tollgate-wrt package.
+"""Build the per-(arch, target) OFFLINE dependency bundle for the tollgate-wrt package.
 
 WHY THIS EXISTS
 ---------------
 `net/tollgate-wrt/Makefile` declares `DEPENDS:=+nodogsplash +jq`. On a router
 with an uplink those two resolve from OpenWrt's own feeds. A freshly flashed
 router with NO uplink has no apk indexes at all, so `apk add <file>.apk`
-cannot resolve them and the install fails. This tool produces, per arch, a
-single release asset
+cannot resolve them and the install fails. This tool produces, per (arch,
+target), a single release asset
 
-    tollgate-wrt-<PKG_VERSION>-<arch>-offline.tar.gz
+    tollgate-wrt-<PKG_VERSION>-<arch>-<target>-offline.tar.gz
+
+The target is in the NAME because one arch can carry several targets
+(mips_24kc = ath79/generic AND ath79/nand), and because the closure itself is
+resolved against the TARGET's indexes -- an ath79-generic bundle is not
+interchangeable with an ath79-nand one. Keep this in lockstep with
+`release-assets.py`'s `bundle_asset()`.
 
 laid out as
 
@@ -2030,8 +2036,57 @@ def guard_router_dep_stage(bundle_dir):
             % (staged, ROUTER_INSTALLER_NAME, after))
 
 
+def _release_assets_module():
+    """Import the sibling release-assets.py (the release asset table).
+
+    Imported rather than shelled out to: `release-assets.py` owns both asset
+    names, and its `expected_offline()` is the list the release job REFUSES to
+    publish outside of. A second, hand-typed copy of the bundle format string
+    here would drift from that list silently and only surface at the far end of a
+    ~45-minute release run. Cold review of t1 (major) found exactly that second
+    copy; `net/tollgate-wrt/test-feed-ci.sh` Gate C now refuses it.
+    """
+    global _RA_MOD
+    if _RA_MOD is not None:
+        return _RA_MOD
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "release-assets.py")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("tollgate_release_assets", path)
+    if spec is None or spec.loader is None:
+        fail("cannot load the release asset table at %s" % path)
+        raise SystemExit(2)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _RA_MOD = mod
+    return _RA_MOD
+
+
+_RA_MOD = None
+
+
+def bundle_asset_name(version, arch, target):
+    """The offline bundle's asset name — from the ONE table that defines it."""
+    return _release_assets_module().bundle_asset(arch, target, version)
+
+
 def cmd_assemble(args):
-    bundle_name = "tollgate-wrt-%s-%s-offline" % (args.pkg_version, _arch_of(args))
+    # Target-qualified (2026-10-15, Option A): mips_24kc serves both
+    # ath79/generic and ath79/nand, so an arch-only bundle name would make the
+    # two rows collide on one release asset. The name comes from
+    # release-assets.py's bundle_asset() -- NOT from an f-string here.
+    bundle_name = bundle_asset_name(args.pkg_version, _arch_of(args), _target_of(args))
+    # bundle_asset() names the release ASSET (…-offline.tar.gz); the assembled
+    # DIRECTORY keeps everything but the compression suffix, i.e. it still ends
+    # in "-offline". Strip exactly the tarball suffix -- stripping
+    # "-offline.tar.gz" would silently drop the "-offline" marker the tests and
+    # install instructions key on.
+    tail = "-offline.tar.gz"
+    if not bundle_name.endswith(tail):
+        fail("release-assets.py bundle_asset() returned '%s', which does not end in %s"
+             % (bundle_name, tail))
+        raise SystemExit(2)
+    bundle_name = bundle_name[:-len(".tar.gz")]
     out_dir = os.path.abspath(args.out)
     bundle_dir = os.path.join(out_dir, bundle_name)
     payload = load_payload(args.payload)
@@ -2171,11 +2226,33 @@ def cmd_assemble(args):
     return 0
 
 
-def _arch_of(args):
-    if args.arch:
-        return args.arch
+def _field_of(args, name):
+    """A required (arch|target) field, from the argument or the payload.
+
+    `payload["target"]` used to be a bare dict access: a payload written without
+    a target raised KeyError and dumped a traceback 45 minutes into a release
+    run instead of naming the missing field. Fail-with-a-message costs one line
+    and turns that into a legible refusal. (Cold review of t1, major finding.)
+    """
+    val = getattr(args, name, "")
+    if val:
+        return val
     payload = load_payload(args.payload)
-    return payload["arch"]
+    val = payload.get(name, "")
+    if not val:
+        fail("payload %s has no '%s' field and --%s was not given: the bundle NAME "
+             "carries the %s, so it cannot be derived"
+             % (args.payload, name, name, name))
+        raise SystemExit(2)
+    return val
+
+
+def _arch_of(args):
+    return _field_of(args, "arch")
+
+
+def _target_of(args):
+    return _field_of(args, "target")
 
 
 def load_payload(path):
@@ -2274,6 +2351,9 @@ def main(argv):
     asm_p.add_argument("--payload", default="")
     asm_p.add_argument("--apks-dir", default="")
     asm_p.add_argument("--arch", default="")
+    asm_p.add_argument("--target", default="",
+                       help="target/subtarget for the bundle NAME "
+                            "(default: the payload's target)")
     asm_p.add_argument("--pkg-version", required=True)
     asm_p.add_argument("--installer", default="",
                        help="a single install-offline.sh for the bundle root")
