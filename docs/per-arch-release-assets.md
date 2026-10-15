@@ -32,17 +32,32 @@ several OpenWrt targets. `mips_24kc` is both `ath79/generic` (AR300M `-lite`,
 (`tollgate-wrt_<ver>_mips_24kc.apk`) made those two release rows **collide on a
 single asset name** — which is why one of them had to stay parked.
 
-With the target appended, both rows publish at once, and the wizard's
-`feedAssetURL(arch, target, ext)` resolves to the target the router actually
-reports. `net/tollgate-wrt/test-feed-ci.sh` **Gate C** refuses an arch-only
-name (with negative controls), so the disambiguation cannot be dropped again by
-accident.
+With the target appended both rows publish at once, and the installer can resolve
+the asset for the target the router actually reports
+(`internal/app/arch.go`, `feedAssetURL(arch, target, ext)`).
+
+**Ordering caveat (do not skip):** the installer-side threading of the target is
+its own change (card *t_5066bf78*), not part of the feed lane. Until it lands,
+the installer still derives an arch-only URL and every install 404s against a
+target-qualified release — the feed's name is correct, but the two halves have to
+ship together. Tag the next release only once both are in. `net/tollgate-wrt/test-feed-ci.sh`
+**Gate C** refuses an arch-only name (with negative controls), so the
+disambiguation cannot be dropped again by accident.
 
 One shape, one source: `release-assets.py` owns both names
-(`package_asset()` / `bundle_asset()`), and `release-publish.yml` **derives**
-the staged name from it (`package-name` / `bundle-name` subcommands) instead of
-re-typing it — a staged name that disagreed with the expected set would fail the
-publish job at the far end of a 45-minute build.
+(`package_asset()` / `bundle_asset()`), and **both** consumers derive from it
+rather than re-typing the shape — `release-publish.yml` for the staged package
+name (`package-name`), and `offline-bundle.py` for the bundle name (it imports
+the module and calls `bundle_asset()`; the `bundle-name` subcommand is the same
+function on the CLI). A name that disagreed with the expected set would fail the
+publish job at the far end of a 45-minute build, or — worse — publish a bundle
+the signed manifest never covered.
+
+`Gate C` asserts the derive-don't-retype half for the package name, and refuses a
+hand-typed `tollgate-wrt-<version>-…` bundle name in the release workflow; the
+bundle assembler's own name is pinned to `bundle-asset()` by
+`offline-bundle-test.sh` (which also proves the name CHANGES with the target, so
+a name that ignored the target could not pass).
 
 ## Which arches are published
 
@@ -88,9 +103,10 @@ restore it — the exact tuple/target/SDK/ext values are preserved so it is a
 one-line edit. Two gates keep this honest (`test-feed-ci.sh`): **Gate D** fails
 if a club **arch/target pair** loses its `.apk` row or its offline bundle, and
 **Gate K** fails if a parked row is no longer a paste-back-able 4-tuple (or if
-its target field was emptied — a restored row would then publish a malformed
-name). Gate J additionally requires every release-lane arch/**target pair** to
-keep an active-or-parked row in the PR workflow matrix.
+any of its four fields was emptied — the target field included: a restored row
+would then publish a malformed name). Gate J additionally requires every
+release-lane arch/**target pair** to keep an active-or-parked row in the PR
+workflow matrix.
 
 Note that the installer derives its download URL from the arch tuple rather than
 from a per-arch map (`internal/app/arch.go`, `feedAssetURL`), so parking a lane

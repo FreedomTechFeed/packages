@@ -177,6 +177,11 @@ if not (ar_lite != ar_nand and ar_lite.endswith("-ath79-generic.apk")
 if rc == 0:
     print("every release row's asset name carries its target (%d packages, %d bundles); "
           "AR300M g/n share mips_24kc without colliding" % (len(pkgs), len(offs)))
+    print("NOTE (WHAT THIS DOES NOT PROVE): this compares the matrix against the SAME table, "
+          "so it cannot detect an expected asset with no matrix row, or a *different* arch-only "
+          "shape than the two it greps for. The non-tautological half is the collision/dupe "
+          "assertion and the arch-only refusal; see also Gate J (PR matrix) and the "
+          "derived_naming_check below (workflow must DERIVE the name).")
 sys.exit(rc)
 PY
 }
@@ -192,6 +197,9 @@ derived_naming_check() { # derived_naming_check <release workflow> ; rc 0 = deri
     fi
     grep -qE 'tollgate-wrt_\*_\$\{\{ matrix\.arch \}\}-\$\{\{ matrix\.target \}\}\.' "$_f" \
         || { echo "the uploaded artifact glob does not require the target slot (tollgate-wrt_*_<arch>-<target>.<ext>)"; return 1; }
+    if grep -qE 'tollgate-wrt-%s|tollgate-wrt-\$\{?(args|PKG_VERSION)' "$_f"; then
+        echo "the release workflow hand-types an OFFLINE BUNDLE name instead of deriving it from release-assets.py bundle-name"; return 1
+    fi
     return 0
 }
 
@@ -607,10 +615,11 @@ else
         ok "control: the check refuses a shipped arch with no active-or-parked PR row"
     fi
     rm -f "$_wfctl"
-    # Control B: delete only ONE target of a multi-target arch. With the
-    # arch-only comparison this passed vacuously (the sibling target's row still
-    # named the arch); the (arch, target) unit must catch it. This is the
-    # control that makes the upgrade to pairs load-bearing.
+    # Control B: repoint ONE target of a multi-target arch. With the arch-only
+    # comparison this passed vacuously (the sibling target's row still named the
+    # arch); the (arch, target) unit must catch it. This is the control that
+    # makes the upgrade to pairs load-bearing. (The mutation is an edit, not a
+    # delete -- review of t1 found this comment claiming a delete.)
     _wfctl=$(mktemp)
     sed 's/"target": "ath79-generic"/"target": "ath79-OTHER"/g' "$PR_BUILD_WF" > "$_wfctl"
     if gate_j "$_wfctl" "$REL_ASSETS" >/dev/null 2>&1; then

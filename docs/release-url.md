@@ -48,7 +48,12 @@ truth for the asset *name*; this document adds the *tag* half of the mapping.
 
 `scripts/tollgate-release-url.sh` needs a POSIX shell only (busybox `ash` on the
 router included) and refuses to emit a URL it cannot construct. The target is a
-**required** argument — the script will not infer it:
+**required** argument — the script will not infer it, and it will not accept the
+legacy `(tag, arch, ext)` form either (that third positional is an extension, not
+a target, and reading it as one emits a plausible URL that 404s — the exact
+failure class this script exists to stop). Run
+`sh scripts/tollgate-release-url.sh --self-test` to exercise every refusal; it
+exits non-zero if any expected refusal was accepted.
 
 ```sh
 sh scripts/tollgate-release-url.sh v0.6.0-rc6 aarch64_cortex-a53 mediatek-filogic

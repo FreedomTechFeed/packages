@@ -555,6 +555,64 @@ if grep -q "pkgs/tollgate-wrt_${VERSION}_${ARCH}-${TARGET}.apk" "$BUNDLE/MANIFES
 else
   fail "manifest does not cover the tollgate-wrt package"
 fi
+
+# ---------------------------------------------------- B2: the NAME's provenance
+# The bundle directory name is the asset name minus the tarball suffix, and it
+# must come from release-assets.py's bundle_asset() -- the table the release job
+# refuses to publish outside of. A second hand-typed copy here would drift from
+# that list silently (cold review of t1, major finding).
+RA_SCRIPT="$(dirname "$SCRIPT")/release-assets.py"
+if [ -f "$RA_SCRIPT" ]; then
+  EXPECTED_BUNDLE_ASSET="$(python3 "$RA_SCRIPT" bundle-name "$VERSION" "$ARCH" "$TARGET")"
+  if [ "$BUNDLE" = "$WORK/out/${EXPECTED_BUNDLE_ASSET%.tar.gz}" ]; then
+    pass "the bundle directory name is release-assets.py bundle_asset() ($EXPECTED_BUNDLE_ASSET)"
+  else
+    fail "the bundle name is NOT the one release-assets.py publishes: got $(basename "$BUNDLE"), the table says ${EXPECTED_BUNDLE_ASSET%.tar.gz}"
+  fi
+  # The name has to be in the expected ASSET list too, not merely well-formed:
+  # an asset the expected set does not carry is one the release job refuses to
+  # publish (release-publish.yml "Refuse to publish a release outside...").
+  # Capture the list FIRST: piping python straight into `grep -q` closes the pipe
+  # early and python dies with BrokenPipeError (observed while writing this).
+  EXPECTED_OFFLINE_LIST="$(python3 "$RA_SCRIPT" expected-offline "$VERSION")"
+  if printf '%s\n' "$EXPECTED_OFFLINE_LIST" | grep -qxF "$EXPECTED_BUNDLE_ASSET"; then
+    pass "the bundle name is in the expected-offline asset set"
+  else
+    fail "the bundle name $EXPECTED_BUNDLE_ASSET is not in expected-offline $VERSION"
+  fi
+  # Tag the BUNDLE name with the WRONG target: the name must change with it, so
+  # the assertion above is not satisfied by a name that ignores the target.
+  WRONG_TARGET_ASSET="$(python3 "$RA_SCRIPT" bundle-name "$VERSION" "$ARCH" ath79-OTHER)"
+  if [ "$WRONG_TARGET_ASSET" != "$EXPECTED_BUNDLE_ASSET" ]; then
+    pass "the bundle name carries the target (ath79-OTHER yields a different asset)"
+  else
+    fail "the bundle name does not carry the target: both targets yield $EXPECTED_BUNDLE_ASSET"
+  fi
+else
+  fail "release-assets.py not found beside $SCRIPT (the bundle name has no source of truth)"
+fi
+
+# A payload with NO target field must fail with a message, not a KeyError
+# traceback 45 minutes into a release run (cold review of t1, major finding).
+python3 - "$WORK/payload.json" "$WORK/payload-notarget.json" <<'PY'
+import json, sys
+src, out = sys.argv[1], sys.argv[2]
+p = json.load(open(src))
+p.pop("target", None)
+json.dump(p, open(out, "w"), indent=2)
+PY
+if python3 "$SCRIPT" assemble --payload "$WORK/payload-notarget.json" --arch "$ARCH" \
+     --pkg-version "$VERSION" --out "$WORK/out-notarget" \
+     --installer "$WORK/bundle-src/install-offline.sh" > "$WORK/assemble-notarget.log" 2>&1; then
+  fail "a payload with no target assembled anyway (an unguarded name cannot be trusted)"
+else
+  if grep -q "has no 'target' field" "$WORK/assemble-notarget.log" \
+     && ! grep -q "Traceback" "$WORK/assemble-notarget.log"; then
+    pass "a payload with no target is refused BY NAME, with no traceback"
+  else
+    fail "the no-target refusal does not name the field: $(tail -n2 "$WORK/assemble-notarget.log")"
+  fi
+fi
 if grep -q 'install-offline.sh' "$BUNDLE/MANIFEST.sha256" && grep -q 'README.md' "$BUNDLE/MANIFEST.sha256"; then
   pass "manifest covers the installer and the README"
 else
