@@ -527,7 +527,7 @@ PKG_NAME:=tollgate-wrt
 #   merged module cf7cad34 (#940, bounded mint registration); PKG_SOURCE_TAG
 #   stays v0.6.0-rc4 because the module repo-root VERSION is unchanged at that
 #   commit, and the portal lock is UNCHANGED.
-PKG_VERSION:=0.6.0_rc5
+PKG_VERSION:=0.6.0_rc6
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets

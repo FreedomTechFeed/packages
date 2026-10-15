@@ -471,7 +471,7 @@ else
     rm -f "$_kctl"
     # Control B: a corrupted parked row (no longer paste-back-able) must be refused.
     _kctl=$(mktemp --suffix=.py)
-    sed '/^    # ("x86_64", "x86-64", "25\.12\.5", "apk"),$/s/"apk"),/"apk),/' "$REL_ASSETS" > "$_kctl"
+    sed '/^    # ("mips_24kc", "ath79-nand", "25\.12\.5", "apk"),$/s/"apk"),/"apk),/' "$REL_ASSETS" > "$_kctl"
     if parked_rows_check "$_kctl" >/dev/null 2>&1; then
         fail "Gate K: control: a corrupted (unrestorable) parked row was ACCEPTED (the check is vacuous)"
     else

@@ -78,20 +78,25 @@ RELEASES = [
     ("aarch64_cortex-a53", "mediatek-filogic", "24.10.8", "ipk"),
     ("mips_24kc", "ath79-generic", "25.12.5", "apk"),
     ("mips_24kc", "ath79-generic", "24.10.8", "ipk"),
-    # --- PARKED (uncomment to restore; no club device needs these) -------
-    # ("aarch64_cortex-a72", "bcm27xx-bcm2711", "25.12.5", "apk"),
-    # ("aarch64_cortex-a72", "bcm27xx-bcm2711", "24.10.8", "ipk"),
-    # ("arm_cortex-a7", "bcm27xx-bcm2709", "25.12.5", "apk"),
-    # ("arm_cortex-a7", "bcm27xx-bcm2709", "24.10.8", "ipk"),
-    # ("mipsel_24kc", "mt7621", "25.12.5", "apk"),
-    # ("mipsel_24kc", "mt7621", "24.10.8", "ipk"),
-    # ("mips64_octeonplus", "octeon-generic", "25.12.5", "apk"),
-    # ("mips64_octeonplus", "octeon-generic", "24.10.8", "ipk"),
-    # ("x86_64", "x86-64", "25.12.5", "apk"),
-    # ("x86_64", "x86-64", "24.10.8", "ipk"),
-    # AR300M alternatives, not additions: -lite/-16 use ath79/generic;
-    # -nor/-nand use ath79/nand. All four share mips_24kc, so both targets
-    # cannot be live at once: tollgate-wrt_<version>_mips_24kc.<ext> would collide.
+    # --- WIDENED 2026-10-15: every historically-supported arch, so the review
+    # club can test against a wide range of routers. Each row also needs a
+    # wizard device entry (net4sats-wizard-go arch.go) and an offline bundle
+    # (below); Gates D/J/K keep this honest. ---
+    ("aarch64_cortex-a72", "bcm27xx-bcm2711", "25.12.5", "apk"),
+    ("aarch64_cortex-a72", "bcm27xx-bcm2711", "24.10.8", "ipk"),
+    ("arm_cortex-a7", "bcm27xx-bcm2709", "25.12.5", "apk"),
+    ("arm_cortex-a7", "bcm27xx-bcm2709", "24.10.8", "ipk"),
+    ("mipsel_24kc", "mt7621", "25.12.5", "apk"),
+    ("mipsel_24kc", "mt7621", "24.10.8", "ipk"),
+    ("mips64_octeonplus", "octeon-generic", "25.12.5", "apk"),
+    ("mips64_octeonplus", "octeon-generic", "24.10.8", "ipk"),
+    ("x86_64", "x86-64", "25.12.5", "apk"),
+    ("x86_64", "x86-64", "24.10.8", "ipk"),
+    # --- STILL PARKED: the AR300M variants cannot coexist with the ath79-generic
+    # mips_24kc row above — both would emit tollgate-wrt_<version>_mips_24kc.<ext>
+    # and collide. -lite/-16 use ath79/generic (shipped); -nor/-nand use
+    # ath79/nand. To ship the NAND variants, swap the mips_24kc rows above to
+    # ath79-nand (uncomment here) — never both at once. ---
     # ("mips_24kc", "ath79-nand", "25.12.5", "apk"),
     # ("mips_24kc", "ath79-nand", "24.10.8", "ipk"),
 ]
@@ -131,6 +136,15 @@ OFFLINE_BUNDLES = [
     # profile such as glinet_gl-ar300m-nor. The closure is resolved against the
     # target's indexes, so an ath79-generic bundle is not interchangeable.
     ("mips_24kc", "ath79-generic", "25.12.5", "glinet_gl-ar300m-lite", "apk"),
+    # --- WIDENED 2026-10-15: a WAN-less bundle for every newly-shipped arch, so
+    # a router with no uplink can still resolve its dependency closure. profile
+    # "" assumes default_packages only, which bundles strictly MORE (the safe
+    # direction per the note above). ---
+    ("aarch64_cortex-a72", "bcm27xx-bcm2711", "25.12.5", "", "apk"),
+    ("arm_cortex-a7", "bcm27xx-bcm2709", "25.12.5", "", "apk"),
+    ("mipsel_24kc", "mt7621", "25.12.5", "", "apk"),
+    ("mips64_octeonplus", "octeon-generic", "25.12.5", "", "apk"),
+    ("x86_64", "x86-64", "25.12.5", "", "apk"),
 ]
 
 
