@@ -111,10 +111,10 @@ RELEASES = [
     # (below); Gates D/J/K keep this honest. ---
     ("aarch64_cortex-a72", "bcm27xx-bcm2711", "25.12.5", "apk"),
     ("aarch64_cortex-a72", "bcm27xx-bcm2711", "24.10.8", "ipk"),
-    ("arm_cortex-a7", "bcm27xx-bcm2709", "25.12.5", "apk"),
-    ("arm_cortex-a7", "bcm27xx-bcm2709", "24.10.8", "ipk"),
-    ("mipsel_24kc", "mt7621", "25.12.5", "apk"),
-    ("mipsel_24kc", "mt7621", "24.10.8", "ipk"),
+    ("arm_cortex-a7_neon-vfpv4", "bcm27xx-bcm2709", "25.12.5", "apk"),
+    ("arm_cortex-a7_neon-vfpv4", "bcm27xx-bcm2709", "24.10.8", "ipk"),
+    ("mipsel_24kc", "ramips-mt7621", "25.12.5", "apk"),
+    ("mipsel_24kc", "ramips-mt7621", "24.10.8", "ipk"),
     ("mips64_octeonplus", "octeon-generic", "25.12.5", "apk"),
     ("mips64_octeonplus", "octeon-generic", "24.10.8", "ipk"),
     ("x86_64", "x86-64", "25.12.5", "apk"),
@@ -172,8 +172,8 @@ OFFLINE_BUNDLES = [
     # "" assumes default_packages only, which bundles strictly MORE (the safe
     # direction per the note above). ---
     ("aarch64_cortex-a72", "bcm27xx-bcm2711", "25.12.5", "", "apk"),
-    ("arm_cortex-a7", "bcm27xx-bcm2709", "25.12.5", "", "apk"),
-    ("mipsel_24kc", "mt7621", "25.12.5", "", "apk"),
+    ("arm_cortex-a7_neon-vfpv4", "bcm27xx-bcm2709", "25.12.5", "", "apk"),
+    ("mipsel_24kc", "ramips-mt7621", "25.12.5", "", "apk"),
     ("mips64_octeonplus", "octeon-generic", "25.12.5", "", "apk"),
     ("x86_64", "x86-64", "25.12.5", "", "apk"),
     # UN-PARKED 2026-10-15 (card t2): ath79-nand (AR300M -nor / -nand) is the
