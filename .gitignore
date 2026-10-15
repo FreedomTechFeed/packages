@@ -7,6 +7,11 @@
 /.env
 /.env.*
 /*.patch
+# Release-tooling self-tests run the scripts in .github/workflows/scripts/*.py
+# in place, which drops a __pycache__/ beside them. Never publish bytecode to a
+# release tag: 2026-10-15 (t1) shipped one inside a release-naming commit.
+__pycache__/
+*.pyc
 # Built portal/admin SPAs — staged into files/ by scripts/build-portal-bundle.sh
 # (build-in-CI rule #335). Never commit these; CI produces and consumes them.
 /net/tollgate-wrt/files/tollgate-captive-portal-site/

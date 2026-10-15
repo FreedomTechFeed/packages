@@ -33,7 +33,8 @@ sha256sum --check --strict SHA256SUMS   # after fetching the package(s) you care
 ```
 
 Note that the tag above is *not* the prefix of the asset's version: the tag is
-`v0.6.0-rc1-pre29` while the asset is `tollgate-wrt_0.6.0_rc1_pre29_<arch>.apk`.
+`v0.6.0-rc6` while the asset is `tollgate-wrt_0.6.0_rc6_<arch>-<target>.apk` (the
+arch alone does not identify an asset — one arch serves several targets).
 Resolving one into the other by hand (or with `gh`, which OpenWrt does not ship)
 is how a handoff ends up emitting an empty variable. Use
 `scripts/tollgate-release-url.sh` / `docs/release-url.md` instead.

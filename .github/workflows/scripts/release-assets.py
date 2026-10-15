@@ -13,12 +13,30 @@ Usage:
     release-assets.py offline-matrix          -> offline bundle build matrix JSON
     release-assets.py expected-offline <v>    -> offline bundle asset names
     release-assets.py expected <version>      -> EVERY release asset, one per line
+    release-assets.py package-name <v> <arch> <target> <ext>  -> one asset name
+    release-assets.py bundle-name  <v> <arch> <target>        -> one bundle name
 
 <version> is the feed's PKG_VERSION (net/tollgate-wrt/Makefile), e.g.
-0.6.0_alpha4_pre15; asset names are
+0.6.0_alpha4_pre15; asset names are TARGET-QUALIFIED:
 
-    tollgate-wrt_<version>_<arch>.<ext>
-    tollgate-wrt-<version>-<arch>-offline.tar.gz
+    tollgate-wrt_<version>_<arch>-<target>.<ext>
+    tollgate-wrt-<version>-<arch>-<target>-offline.tar.gz
+
+The `<target>` slot is load-bearing, not decoration: one CPU arch can serve
+several OpenWrt targets (mips_24kc is both ath79/generic -- AR300M -lite/-16 --
+and ath79/nand -- AR300M -nor/-nand), and an arch-only name makes those two rows
+collide on a single asset name. With the target in the name both rows can ship
+at once.
+
+ORDERING CAVEAT (same text as docs/per-arch-release-assets.md, deliberately
+duplicated so a reader who only opens this table still sees it): the
+installer-side threading of the target (internal/app/arch.go feedAssetURL) is a
+SEPARATE change -- card t_5066bf78 -- not part of the feed lane. Until it lands
+the installer still asks for an arch-only asset, so every install 404s against a
+target-qualified release. The two halves must ship together before the next tag.
+
+Renaming back to an arch-only name is refused by Gate C/K of
+net/tollgate-wrt/test-feed-ci.sh.
 """
 import json
 import sys
@@ -69,6 +87,15 @@ import sys
 # K: every parked row is still a paste-back-able 4-tuple). Keep the parked
 # block INSIDE the list so restoring a row is a one-line edit.
 #
+# TARGET-QUALIFIED NAMES (2026-10-15, Option A). Every asset name now carries
+# the target as well as the arch:
+#   tollgate-wrt_<version>_<arch>-<target>.<ext>
+# so the old reason a row had to stay parked -- "all four AR300M variants share
+# mips_24kc, so ath79-generic and ath79-nand cannot both be live without
+# colliding on tollgate-wrt_<version>_mips_24kc.<ext>" -- no longer holds.
+# Gate C refuses an arch-only name outright (with a negative control), so the
+# disambiguation cannot be dropped again by accident.
+#
 # Before restoring an arch here, also check the wizard's device list
 # (net4sats-wizard-go arch.go) -- a shipped asset with no wizard entry is
 # invisible, and a wizard entry with no asset 404s on install.
@@ -78,22 +105,31 @@ RELEASES = [
     ("aarch64_cortex-a53", "mediatek-filogic", "24.10.8", "ipk"),
     ("mips_24kc", "ath79-generic", "25.12.5", "apk"),
     ("mips_24kc", "ath79-generic", "24.10.8", "ipk"),
-    # --- PARKED (uncomment to restore; no club device needs these) -------
-    # ("aarch64_cortex-a72", "bcm27xx-bcm2711", "25.12.5", "apk"),
-    # ("aarch64_cortex-a72", "bcm27xx-bcm2711", "24.10.8", "ipk"),
-    # ("arm_cortex-a7", "bcm27xx-bcm2709", "25.12.5", "apk"),
-    # ("arm_cortex-a7", "bcm27xx-bcm2709", "24.10.8", "ipk"),
-    # ("mipsel_24kc", "mt7621", "25.12.5", "apk"),
-    # ("mipsel_24kc", "mt7621", "24.10.8", "ipk"),
-    # ("mips64_octeonplus", "octeon-generic", "25.12.5", "apk"),
-    # ("mips64_octeonplus", "octeon-generic", "24.10.8", "ipk"),
-    # ("x86_64", "x86-64", "25.12.5", "apk"),
-    # ("x86_64", "x86-64", "24.10.8", "ipk"),
-    # AR300M alternatives, not additions: -lite/-16 use ath79/generic;
-    # -nor/-nand use ath79/nand. All four share mips_24kc, so both targets
-    # cannot be live at once: tollgate-wrt_<version>_mips_24kc.<ext> would collide.
-    # ("mips_24kc", "ath79-nand", "25.12.5", "apk"),
-    # ("mips_24kc", "ath79-nand", "24.10.8", "ipk"),
+    # --- WIDENED 2026-10-15: every historically-supported arch, so the review
+    # club can test against a wide range of routers. Each row also needs a
+    # wizard device entry (net4sats-wizard-go arch.go) and an offline bundle
+    # (below); Gates D/J/K keep this honest. ---
+    ("aarch64_cortex-a72", "bcm27xx-bcm2711", "25.12.5", "apk"),
+    ("aarch64_cortex-a72", "bcm27xx-bcm2711", "24.10.8", "ipk"),
+    ("arm_cortex-a7", "bcm27xx-bcm2709", "25.12.5", "apk"),
+    ("arm_cortex-a7", "bcm27xx-bcm2709", "24.10.8", "ipk"),
+    ("mipsel_24kc", "mt7621", "25.12.5", "apk"),
+    ("mipsel_24kc", "mt7621", "24.10.8", "ipk"),
+    ("mips64_octeonplus", "octeon-generic", "25.12.5", "apk"),
+    ("mips64_octeonplus", "octeon-generic", "24.10.8", "ipk"),
+    ("x86_64", "x86-64", "25.12.5", "apk"),
+    ("x86_64", "x86-64", "24.10.8", "ipk"),
+    # --- UN-PARKED 2026-10-15 (card t2): target-qualified names let the AR300M
+    # NAND variants (mips_24kc/ath79-nand) ship alongside ath79-generic above --
+    # the two used to collide on tollgate-wrt_<version>_mips_24kc.<ext>. ---
+    ("mips_24kc", "ath79-nand", "25.12.5", "apk"),
+    ("mips_24kc", "ath79-nand", "24.10.8", "ipk"),
+    # --- PARKED (uncomment to restore; not a club device). aarch64_generic /
+    # armsr-armv8 is the generic ARM SystemReady target; kept parked on purpose
+    # so Gate K still has a real, paste-back-able restore path to police.
+    # Restoring it also needs an OFFLINE_BUNDLES row and a PR-matrix row. ---
+    # ("aarch64_generic", "armsr-armv8", "25.12.5", "apk"),
+    # ("aarch64_generic", "armsr-armv8", "24.10.8", "ipk"),
 ]
 
 # Offline dependency bundles (WAN-less install), one per arch that ships the
@@ -131,7 +167,31 @@ OFFLINE_BUNDLES = [
     # profile such as glinet_gl-ar300m-nor. The closure is resolved against the
     # target's indexes, so an ath79-generic bundle is not interchangeable.
     ("mips_24kc", "ath79-generic", "25.12.5", "glinet_gl-ar300m-lite", "apk"),
+    # --- WIDENED 2026-10-15: a WAN-less bundle for every newly-shipped arch, so
+    # a router with no uplink can still resolve its dependency closure. profile
+    # "" assumes default_packages only, which bundles strictly MORE (the safe
+    # direction per the note above). ---
+    ("aarch64_cortex-a72", "bcm27xx-bcm2711", "25.12.5", "", "apk"),
+    ("arm_cortex-a7", "bcm27xx-bcm2709", "25.12.5", "", "apk"),
+    ("mipsel_24kc", "mt7621", "25.12.5", "", "apk"),
+    ("mips64_octeonplus", "octeon-generic", "25.12.5", "", "apk"),
+    ("x86_64", "x86-64", "25.12.5", "", "apk"),
+    # UN-PARKED 2026-10-15 (card t2): ath79-nand (AR300M -nor / -nand) is the
+    # same mips_24kc family as the ath79-generic bundle above but a different
+    # target/flash layout, so it needs its own closure. profile
+    # glinet_gl-ar300m-nor is the smallest NAND profile.
+    ("mips_24kc", "ath79-nand", "25.12.5", "glinet_gl-ar300m-nor", "apk"),
 ]
+
+
+def package_asset(arch, target, version, ext):
+    """The release asset name for one (arch, target, ext) release row."""
+    return f"tollgate-wrt_{version}_{arch}-{target}.{ext}"
+
+
+def bundle_asset(arch, target, version):
+    """The release asset name of the offline bundle for one (arch, target)."""
+    return f"tollgate-wrt-{version}-{arch}-{target}-offline.tar.gz"
 
 
 def matrix():
@@ -144,7 +204,8 @@ def matrix():
 
 
 def expected_packages(version):
-    return [f"tollgate-wrt_{version}_{arch}.{ext}" for arch, _, _, ext in RELEASES]
+    return [package_asset(arch, target, version, ext)
+            for arch, target, _, ext in RELEASES]
 
 
 def offline_matrix():
@@ -158,10 +219,8 @@ def offline_matrix():
 
 
 def expected_offline(version):
-    return [
-        f"tollgate-wrt-{version}-{arch}-offline.tar.gz"
-        for arch, _, _, _, _ in OFFLINE_BUNDLES
-    ]
+    return [bundle_asset(arch, target, version)
+            for arch, target, _, _, _ in OFFLINE_BUNDLES]
 
 
 def expected(version):
@@ -189,6 +248,16 @@ def main(argv):
     if len(argv) >= 3 and argv[1] == "expected":
         for name in expected(argv[2]):
             print(name)
+        return 0
+    # The release workflow stages each matrix job's asset under this name. One
+    # naming function, called from one place, so the staged file and the
+    # expected-asset list can never drift (they did not before either, but the
+    # name used to be re-typed in release-publish.yml).
+    if len(argv) >= 6 and argv[1] == "package-name":
+        print(package_asset(argv[3], argv[4], argv[2], argv[5]))
+        return 0
+    if len(argv) >= 5 and argv[1] == "bundle-name":
+        print(bundle_asset(argv[3], argv[4], argv[2]))
         return 0
     sys.stderr.write((__doc__ or "") + "\n")
     return 2

@@ -523,8 +523,11 @@ PKG_NAME:=tollgate-wrt
 #   credential, preserves an owner's own, and still fails CLOSED if the default
 #   write cannot take. PKG_SOURCE_TAG moves with the tarball's VERSION
 #   (v0.6.0-rc3 -> v0.6.0-rc4); PKG_HASH moves WITH the pin; the portal lock
-#   (c11e6053) is UNCHANGED. PKG_VERSION is 0.6.0_rc4.
-PKG_VERSION:=0.6.0_rc4
+#   (c11e6053) is UNCHANGED. RC5 advances PKG_VERSION to 0.6.0_rc5 for the
+#   merged module cf7cad34 (#940, bounded mint registration); PKG_SOURCE_TAG
+#   stays v0.6.0-rc4 because the module repo-root VERSION is unchanged at that
+#   commit, and the portal lock is UNCHANGED.
+PKG_VERSION:=0.6.0_rc6
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -597,9 +600,10 @@ PKG_VERSION:=0.6.0_rc4
 # v0.6.0-alpha4 (Gate B enforces it on every run), and none of the four touches
 # portal content.
 # RC1 advances the pin to a2117251 -- the MERGED module main (PRs #896 + #897).
-# RC2 advances it to f89c879, RC3 to 27baf22, and RC4 to 8a5c8b38 -- the MERGED
-# module main after #913 (the fixed-default-credential reversal).
-PKG_SOURCE_VERSION:=8a5c8b385bdde48a640341d553e044ff40a398d7
+# RC2 advances it to f89c879, RC3 to 27baf22, RC4 to 8a5c8b38 -- the MERGED
+# module main after #913 (the fixed-default-credential reversal) -- and RC5 to
+# cf7cad34, the MERGED module main after #940 (bounded mint registration).
+PKG_SOURCE_VERSION:=cf7cad34677e87e775e7f16786b1bbf18c4bc8bc
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -722,8 +726,12 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # yields
 # 1a391ca26b41acf921d22ef4f87758c1c701553b3bbaad2326b5562269e51a86 -- the value
 # committed below (codeload reports 1877402 bytes for it).
+# RC5 re-calibrated on its pin move: a fresh download of the cf7cad34 tarball
+# yields
+# 0dd6df217872b3836dd484c0a8110019c51372cff8c1d0e9e21bbe8a081f53cd -- the value
+# committed below (codeload reports 1884063 bytes for it).
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=1a391ca26b41acf921d22ef4f87758c1c701553b3bbaad2326b5562269e51a86
+PKG_HASH:=0dd6df217872b3836dd484c0a8110019c51372cff8c1d0e9e21bbe8a081f53cd
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
@@ -960,6 +968,18 @@ echo "Restarting network..."
 /etc/init.d/network restart 2>/dev/null || true
 wait_for_iface br-lan
 wait_for_iface br-private || echo "Note: br-private not found — this is expected on devices without a private network configured."
+
+# The uplink lease can arrive only AFTER the restart above, so the private subnet
+# chosen at uci-defaults time may now collide with the upstream — a router that
+# answers for the upstream gateway's own address breaks DNS. Re-check now that
+# the uplink is up, and reload the network only if the private subnet had to move.
+# (Mirrors the module's packaging/Makefile at PKG_SOURCE_VERSION — module #926.)
+if [ -x /etc/uci-defaults/99-tollgate-setup ]; then
+    ( TOLLGATE_SETUP_LIB_ONLY=1 . /etc/uci-defaults/99-tollgate-setup 2>/dev/null
+      if command -v recheck_private_subnet >/dev/null 2>&1; then
+          recheck_private_subnet && /etc/init.d/network restart 2>/dev/null || true
+      fi )
+fi
 
 echo "Reloading remaining services..."
 wifi reload 2>/dev/null || true
