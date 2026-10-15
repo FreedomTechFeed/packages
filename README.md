@@ -45,6 +45,9 @@ either.
 
 See [docs/per-arch-release-assets.md](docs/per-arch-release-assets.md) for the
 arch/target matrices, the device profiles, and the offline install bundle.
+For installing onto the physical bench routers and recording the install films
+(and how to reach a router after install moves its LAN), see
+[docs/bench-and-films.md](docs/bench-and-films.md).
 
 ## License
 
