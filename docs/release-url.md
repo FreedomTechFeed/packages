@@ -5,7 +5,7 @@ handoff, wizard entry or operator note that treats them as interchangeable will
 produce a URL that 404s — or worse, an empty variable that produces a URL that
 looks plausible.
 
-## The two traps
+## The three traps
 
 Field incident (2026-10-11, router recovery over SSH):
 
@@ -23,9 +23,16 @@ $TAG and $VER were both empty -- the URL proved it:
 
 | what | value |
 |---|---|
-| git tag | `v0.6.0-rc1-pre29` |
-| package version (`PKG_VERSION` in `net/tollgate-wrt/Makefile`) | `0.6.0_rc1_pre29` |
-| asset | `tollgate-wrt_0.6.0_rc1_pre29_aarch64_cortex-a53.apk` |
+| git tag | `v0.6.0-rc6` |
+| package version (`PKG_VERSION` in `net/tollgate-wrt/Makefile`) | `0.6.0_rc6` |
+| asset | `tollgate-wrt_0.6.0_rc6_aarch64_cortex-a53-mediatek-filogic.apk` |
+
+3. **The arch alone does not identify an asset (2026-10-15, Option A).** The
+   asset name carries the OpenWrt **target** too, because one CPU arch serves
+   several targets: `mips_24kc` is both `ath79/generic` (AR300M `-lite`, `-16`)
+   and `ath79/nand` (AR300M `-nor`, `-nand`). Guessing the target from the arch
+   produces the *other* target's asset name — which exists, downloads, and
+   installs a package built for the wrong flash layout.
 
 The transformation is mechanical and total:
 
@@ -40,18 +47,22 @@ truth for the asset *name*; this document adds the *tag* half of the mapping.
 ## Resolve it without `gh`, `python` or a network call
 
 `scripts/tollgate-release-url.sh` needs a POSIX shell only (busybox `ash` on the
-router included) and refuses to emit a URL it cannot construct:
+router included) and refuses to emit a URL it cannot construct. The target is a
+**required** argument — the script will not infer it:
 
 ```sh
-sh scripts/tollgate-release-url.sh v0.6.0-rc1-pre29 aarch64_cortex-a53
-# https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-rc1-pre29/tollgate-wrt_0.6.0_rc1_pre29_aarch64_cortex-a53.apk
+sh scripts/tollgate-release-url.sh v0.6.0-rc6 aarch64_cortex-a53 mediatek-filogic
+# https://github.com/FreedomTechFeed/packages/releases/download/v0.6.0-rc6/tollgate-wrt_0.6.0_rc6_aarch64_cortex-a53-mediatek-filogic.apk
 
-sh scripts/tollgate-release-url.sh 0.6.0_rc1_pre29 mips_24kc ipk   # version form, opkg lane
-sh scripts/tollgate-release-url.sh --arches                       # club arch tuples
+sh scripts/tollgate-release-url.sh 0.6.0_rc6 mips_24kc ath79-generic ipk  # opkg lane
+sh scripts/tollgate-release-url.sh --arches                              # club arch/target pairs
 ```
 
-Empty input, a malformed version or an unknown extension are hard errors
-(exit 3) with a message, never an empty string in the URL.
+Empty input, a malformed version, an unknown extension — and an arch passed
+without a target — are hard errors (exit 3) with a message, never an empty
+string in the URL. The arch-only 2-argument form that older handoffs used is
+rejected explicitly rather than resolved, since its third positional used to be
+the extension.
 
 ## Self-gating variant for handoffs
 
@@ -60,8 +71,8 @@ Empty input, a malformed version or an unknown extension are hard errors
 handoff that runs it cannot proceed on a wrong or absent URL:
 
 ```sh
-sh scripts/tollgate-release-url.sh --check v0.6.0-rc1-pre29 aarch64_cortex-a53
-# OK  https://github.com/.../tollgate-wrt_0.6.0_rc1_pre29_aarch64_cortex-a53.apk
+sh scripts/tollgate-release-url.sh --check v0.6.0-rc6 aarch64_cortex-a53 mediatek-filogic
+# OK  https://github.com/.../tollgate-wrt_0.6.0_rc6_aarch64_cortex-a53-mediatek-filogic.apk
 #     sha256 fceb5455...a6946
 ```
 
@@ -75,5 +86,8 @@ sh scripts/tollgate-release-url.sh --check v0.6.0-rc1-pre29 aarch64_cortex-a53
   the tools, verify it (`--check`), and paste the resolved URL.
 * Never let an empty variable into a URL. Use `set -u`, or better, use this
   script, which makes the empty case an error you can see.
+* Never guess the target from the arch. Read it off the router
+  (`ubus call system board` → `target`, `/tmp/sysinfo/board_name`) or take it
+  from the release's asset list — a wrong-but-existing target is worse than a 404.
 * When a URL must be typed by hand, `--check` it first. A double slash in the
-  path is the signature of this bug.
+  path is the signature of bug 1; a plausible URL that 404s is usually bug 3.

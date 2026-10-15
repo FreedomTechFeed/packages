@@ -3,9 +3,9 @@
 #
 # The release TAG and the package asset name are NOT the same string:
 #
-#     tag   : v0.6.0-rc1-pre29                        (leading 'v', hyphens)
-#     asset : tollgate-wrt_0.6.0_rc1_pre29_aarch64_cortex-a53.apk
-#                                                     (no 'v', underscores)
+#     tag   : v0.6.0-rc6                             (leading 'v', hyphens)
+#     asset : tollgate-wrt_0.6.0_rc6_aarch64_cortex-a53-mediatek-filogic.apk
+#                                                    (no 'v', underscores)
 #
 # Two field failures are why this script exists:
 #
@@ -16,18 +16,26 @@
 #   2. Even with a tag in hand, copying it into the version slot can never
 #      work -- the two strings differ, per the table above.
 #
+# A THIRD failure is why the target argument exists (2026-10-15, Option A):
+# the asset name carries the OpenWrt TARGET as well as the arch, because one
+# CPU arch serves several targets. `mips_24kc` is both ath79/generic (AR300M
+# -lite/-16) and ath79/nand (AR300M -nor/-nand). An arch-only asset name was
+# ambiguous -- the two rows collided -- so this script must not guess either:
+# the arch alone no longer identifies a URL, and passing one is a hard error
+# rather than a URL that 404s on a NAND unit.
+#
 # This script needs a POSIX shell and nothing else. It never prints a URL it
 # cannot construct: empty or malformed input is a hard error, not a warning.
 #
 # Usage:
-#   tollgate-release-url.sh <tag-or-version> <arch> [apk|ipk]
-#   tollgate-release-url.sh --check <tag-or-version> <arch> [apk|ipk]
+#   tollgate-release-url.sh <tag-or-version> <arch> <target> [apk|ipk]
+#   tollgate-release-url.sh --check <tag-or-version> <arch> <target> [apk|ipk]
 #   tollgate-release-url.sh --arches
 #
 # Examples:
-#   tollgate-release-url.sh v0.6.0-rc1-pre29 aarch64_cortex-a53
-#   tollgate-release-url.sh 0.6.0_rc1_pre29 mips_24kc ipk
-#   tollgate-release-url.sh --check v0.6.0-rc1-pre29 aarch64_cortex-a53
+#   tollgate-release-url.sh v0.6.0-rc6 aarch64_cortex-a53 mediatek-filogic
+#   tollgate-release-url.sh 0.6.0_rc6 mips_24kc ath79-generic ipk
+#   tollgate-release-url.sh --check v0.6.0-rc6 aarch64_cortex-a53 mediatek-filogic
 #
 # `--check` downloads the asset, requires it to be listed in the release's
 # signed SHA256SUMS, and compares digests. It exits non-zero on any mismatch,
@@ -40,23 +48,28 @@ set -u
 REPO="${TOLLGATE_RELEASE_REPO:-FreedomTechFeed/packages}"
 PREFIX="tollgate-wrt"
 
-# Club arches (docs/per-arch-release-assets.md). Old releases also carry parked
-# arches; we accept any arch tuple, but we do not silently invent one.
-CLUB_ARCHES="aarch64_cortex-a53 mips_24kc"
+# Club arch/target pairs (docs/per-arch-release-assets.md). Old releases also
+# carry parked rows; we accept any well-formed arch/target, but we do not
+# silently invent one -- and we never resolve an arch to a target, because the
+# arch alone does not identify an asset name.
+CLUB_ARCH_TARGETS="aarch64_cortex-a53/mediatek-filogic mips_24kc/ath79-generic"
 
 die() { printf 'tollgate-release-url: %s\n' "$1" >&2; exit "${2:-3}"; }
 
 usage() {
     cat >&2 <<EOF
-usage: $(basename "$0") <tag-or-version> <arch> [apk|ipk]
-       $(basename "$0") --check <tag-or-version> <arch> [apk|ipk]
+usage: $(basename "$0") <tag-or-version> <arch> <target> [apk|ipk]
+       $(basename "$0") --check <tag-or-version> <arch> <target> [apk|ipk]
        $(basename "$0") --arches
 
-  <tag-or-version>  v0.6.0-rc1-pre29  or  0.6.0_rc1_pre29  (both accepted)
+  <tag-or-version>  v0.6.0-rc6  or  0.6.0_rc6  (both accepted)
   <arch>            e.g. aarch64_cortex-a53, mips_24kc
+  <target>          e.g. mediatek-filogic, ath79-generic, ath79-nand
+                    (REQUIRED -- mips_24kc alone is ambiguous: ath79/generic
+                     and ath79/nand are different assets)
   [apk|ipk]         apk (OpenWrt 25.12, default) or ipk (24.10)
 
-club arches: $CLUB_ARCHES
+club arch/target pairs: $CLUB_ARCH_TARGETS
 EOF
     exit 2
 }
@@ -91,17 +104,33 @@ sha_of() { # sha_of <file>
 [ "$#" -ge 1 ] || usage
 CHECK=0
 case "$1" in
-    --arches) printf '%s\n' "$CLUB_ARCHES" | tr ' ' '\n'; exit 0 ;;
+    --arches) printf '%s\n' "$CLUB_ARCH_TARGETS" | tr ' ' '\n'; exit 0 ;;
     --check)  CHECK=1; shift ;;
     -h|--help) usage ;;
 esac
 
-[ "$#" -ge 2 ] || usage
-VER_IN="$1"; ARCH="$2"; EXT="${3:-apk}"
+# The target argument is REQUIRED, and the old 2-argument (arch-only) form is
+# refused loudly rather than resolved: the third positional used to be the
+# extension, so an old handoff calling
+#     tollgate-release-url.sh v0.6.0-rc6 mips_24kc apk
+# would now read "apk" as a target and emit an asset name that does not exist.
+# Say so instead of emitting it.
+[ "$#" -ge 3 ] || {
+    if [ "$#" -eq 2 ]; then
+        die "the <target> argument is required: '$2' alone does not identify an asset.
+  Since 2026-10-15 the asset name is tollgate-wrt_<version>_<arch>-<target>.<ext>,
+  because one arch serves several targets (mips_24kc is ath79/generic AND
+  ath79/nand). e.g. $0 $1 $2 ath79-generic"
+    fi
+    usage
+}
+VER_IN="$1"; ARCH="$2"; TARGET="$3"; EXT="${4:-apk}"
 
 [ -n "$VER_IN" ] || die "empty tag/version -- this is exactly the bug this script exists to stop"
 [ -n "$ARCH" ]   || die "empty arch"
+[ -n "$TARGET" ] || die "empty target"
 case "$ARCH" in *[!0-9A-Za-z_-]*) die "arch has unexpected characters: '$ARCH'" ;; esac
+case "$TARGET" in *[!0-9A-Za-z_-]*) die "target has unexpected characters: '$TARGET'" ;; esac
 case "$EXT" in apk|ipk) ;; *) die "unknown extension '$EXT' (want apk or ipk)" ;; esac
 
 VER="$(to_version "$VER_IN")"
@@ -110,14 +139,14 @@ case "$VER" in [0-9]*) ;; *) die "version must start with a digit, got '$VER' (f
 case "$VER" in *[!0-9A-Za-z._]*) die "version has unexpected characters: '$VER'" ;; esac
 
 TAG="$(to_tag "$VER")"
-ASSET="${PREFIX}_${VER}_${ARCH}.${EXT}"
+ASSET="${PREFIX}_${VER}_${ARCH}-${TARGET}.${EXT}"
 BASE="https://github.com/${REPO}/releases/download/${TAG}"
 URL="${BASE}/${ASSET}"
 
-case " $CLUB_ARCHES " in
-    *" $ARCH "*) ;;
-    *) printf 'tollgate-release-url: note: %s is not a club arch (%s); older releases may still carry it\n' \
-           "$ARCH" "$CLUB_ARCHES" >&2 ;;
+case " $CLUB_ARCH_TARGETS " in
+    *" $ARCH/$TARGET "*) ;;
+    *) printf 'tollgate-release-url: note: %s/%s is not a club arch/target pair (%s); older releases may still carry it\n' \
+           "$ARCH" "$TARGET" "$CLUB_ARCH_TARGETS" >&2 ;;
 esac
 
 if [ "$CHECK" -eq 0 ]; then
