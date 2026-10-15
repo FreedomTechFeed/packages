@@ -72,8 +72,8 @@ As of rc6 the release matrix carries **8 arch/target pairs**, each in **apk**
 | `mips_24kc`             | `ath79-generic`    | GL.iNet AR300M `-lite`, `-16`        |
 | `mips_24kc`             | `ath79-nand`       | GL.iNet AR300M `-nor`, `-nand`       |
 | `aarch64_cortex-a72`    | `bcm27xx-bcm2711`  | Raspberry Pi 4 family                |
-| `arm_cortex-a7`         | `bcm27xx-bcm2709`  | Raspberry Pi 2 family                |
-| `mipsel_24kc`           | `mt7621`           | MT7621 routers                       |
+| `arm_cortex-a7_neon-vfpv4` | `bcm27xx-bcm2709` | Raspberry Pi 2 family               |
+| `mipsel_24kc`           | `ramips-mt7621`    | MT7621 routers                       |
 | `mips64_octeonplus`     | `octeon-generic`   | Octeon boards                        |
 | `x86_64`                | `x86-64`           | x86 VMs / boxes                      |
 
