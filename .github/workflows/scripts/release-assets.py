@@ -13,12 +13,23 @@ Usage:
     release-assets.py offline-matrix          -> offline bundle build matrix JSON
     release-assets.py expected-offline <v>    -> offline bundle asset names
     release-assets.py expected <version>      -> EVERY release asset, one per line
+    release-assets.py package-name <v> <arch> <target> <ext>  -> one asset name
+    release-assets.py bundle-name  <v> <arch> <target>        -> one bundle name
 
 <version> is the feed's PKG_VERSION (net/tollgate-wrt/Makefile), e.g.
-0.6.0_alpha4_pre15; asset names are
+0.6.0_alpha4_pre15; asset names are TARGET-QUALIFIED:
 
-    tollgate-wrt_<version>_<arch>.<ext>
-    tollgate-wrt-<version>-<arch>-offline.tar.gz
+    tollgate-wrt_<version>_<arch>-<target>.<ext>
+    tollgate-wrt-<version>-<arch>-<target>-offline.tar.gz
+
+The `<target>` slot is load-bearing, not decoration: one CPU arch can serve
+several OpenWrt targets (mips_24kc is both ath79/generic -- AR300M -lite/-16 --
+and ath79/nand -- AR300M -nor/-nand), and an arch-only name makes those two rows
+collide on a single asset name. With the target in the name both rows can ship
+at once, and the wizard's per-arch download URL (internal/app/arch.go
+feedAssetURL(arch, target, ext)) resolves to the target the router actually
+reports. Renaming back to an arch-only name is refused by Gate C/K of
+net/tollgate-wrt/test-feed-ci.sh.
 """
 import json
 import sys
@@ -69,6 +80,15 @@ import sys
 # K: every parked row is still a paste-back-able 4-tuple). Keep the parked
 # block INSIDE the list so restoring a row is a one-line edit.
 #
+# TARGET-QUALIFIED NAMES (2026-10-15, Option A). Every asset name now carries
+# the target as well as the arch:
+#   tollgate-wrt_<version>_<arch>-<target>.<ext>
+# so the old reason a row had to stay parked -- "all four AR300M variants share
+# mips_24kc, so ath79-generic and ath79-nand cannot both be live without
+# colliding on tollgate-wrt_<version>_mips_24kc.<ext>" -- no longer holds.
+# Gate C refuses an arch-only name outright (with a negative control), so the
+# disambiguation cannot be dropped again by accident.
+#
 # Before restoring an arch here, also check the wizard's device list
 # (net4sats-wizard-go arch.go) -- a shipped asset with no wizard entry is
 # invisible, and a wizard entry with no asset 404s on install.
@@ -89,9 +109,11 @@ RELEASES = [
     # ("mips64_octeonplus", "octeon-generic", "24.10.8", "ipk"),
     # ("x86_64", "x86-64", "25.12.5", "apk"),
     # ("x86_64", "x86-64", "24.10.8", "ipk"),
-    # AR300M alternatives, not additions: -lite/-16 use ath79/generic;
-    # -nor/-nand use ath79/nand. All four share mips_24kc, so both targets
-    # cannot be live at once: tollgate-wrt_<version>_mips_24kc.<ext> would collide.
+    # AR300M alternatives: -lite/-16 use ath79/generic; -nor/-nand use
+    # ath79/nand. All four share mips_24kc. Until 2026-10-15 the two targets
+    # could not both be live, because tollgate-wrt_<version>_mips_24kc.<ext>
+    # collided; with target-qualified names they no longer do, so restoring
+    # this row is a one-line uncomment (card t2, "un-park all targets").
     # ("mips_24kc", "ath79-nand", "25.12.5", "apk"),
     # ("mips_24kc", "ath79-nand", "24.10.8", "ipk"),
 ]
@@ -134,6 +156,16 @@ OFFLINE_BUNDLES = [
 ]
 
 
+def package_asset(arch, target, version, ext):
+    """The release asset name for one (arch, target, ext) release row."""
+    return f"tollgate-wrt_{version}_{arch}-{target}.{ext}"
+
+
+def bundle_asset(arch, target, version):
+    """The release asset name of the offline bundle for one (arch, target)."""
+    return f"tollgate-wrt-{version}-{arch}-{target}-offline.tar.gz"
+
+
 def matrix():
     return {
         "include": [
@@ -144,7 +176,8 @@ def matrix():
 
 
 def expected_packages(version):
-    return [f"tollgate-wrt_{version}_{arch}.{ext}" for arch, _, _, ext in RELEASES]
+    return [package_asset(arch, target, version, ext)
+            for arch, target, _, ext in RELEASES]
 
 
 def offline_matrix():
@@ -158,10 +191,8 @@ def offline_matrix():
 
 
 def expected_offline(version):
-    return [
-        f"tollgate-wrt-{version}-{arch}-offline.tar.gz"
-        for arch, _, _, _, _ in OFFLINE_BUNDLES
-    ]
+    return [bundle_asset(arch, target, version)
+            for arch, target, _, _, _ in OFFLINE_BUNDLES]
 
 
 def expected(version):
@@ -189,6 +220,16 @@ def main(argv):
     if len(argv) >= 3 and argv[1] == "expected":
         for name in expected(argv[2]):
             print(name)
+        return 0
+    # The release workflow stages each matrix job's asset under this name. One
+    # naming function, called from one place, so the staged file and the
+    # expected-asset list can never drift (they did not before either, but the
+    # name used to be re-typed in release-publish.yml).
+    if len(argv) >= 6 and argv[1] == "package-name":
+        print(package_asset(argv[3], argv[4], argv[2], argv[5]))
+        return 0
+    if len(argv) >= 5 and argv[1] == "bundle-name":
+        print(bundle_asset(argv[3], argv[4], argv[2]))
         return 0
     sys.stderr.write((__doc__ or "") + "\n")
     return 2

@@ -279,7 +279,11 @@ ASSETS_PY="$HERE/release-assets.py"
 RELEASE_WF="${OFFLINE_BUNDLE_TEST_WORKFLOW:-$ROOT/.github/workflows/release-publish.yml}"
 VERSION="0.6.0_alpha4_pre17"
 ARCH="aarch64_cortex-a53"
-BUNDLE_ASSET="tollgate-wrt-${VERSION}-${ARCH}-offline.tar.gz"
+# Target-qualified (2026-10-15, Option A): the bundle NAME carries the target,
+# so one arch can serve several targets (mips_24kc = ath79/generic AND
+# ath79/nand) without the two rows colliding on a single release asset.
+TARGET="mediatek-filogic"
+BUNDLE_ASSET="tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline.tar.gz"
 
 PASS=0
 FAIL=0
@@ -498,7 +502,7 @@ mkdir -p "$WORK/bundle-src"
 for name in jq-1.8.1-r2 nodogsplash-5.0.2-r2 libc-1.2.5-r5; do
   printf 'fixture apk %s\n' "$name" > "$WORK/bundle-src/$name.apk"
 done
-printf 'tollgate package\n' > "$WORK/bundle-src/tollgate-wrt_${VERSION}_${ARCH}.apk"
+printf 'tollgate package\n' > "$WORK/bundle-src/tollgate-wrt_${VERSION}_${ARCH}-${TARGET}.apk"
 printf '#!/bin/sh\necho fixture installer\n' > "$WORK/bundle-src/install-offline.sh"
 chmod +x "$WORK/bundle-src/install-offline.sh"
 
@@ -513,7 +517,7 @@ def sha(name):
 
 
 members = []
-for name, kind in (("tollgate-wrt_0.6.0_alpha4_pre17_%s.apk" % arch, "tollgate-package"),
+for name, kind in (("tollgate-wrt_0.6.0_alpha4_pre17_%s-mediatek-filogic.apk" % arch, "tollgate-package"),
                    ("nodogsplash-5.0.2-r2.apk", "package"),
                    ("jq-1.8.1-r2.apk", "package"),
                    ("libc-1.2.5-r5.apk", "package")):
@@ -539,14 +543,14 @@ else
   fail "bundle assembly: $(tail -n2 "$WORK/assemble.log")"
 fi
 
-BUNDLE="$WORK/out/tollgate-wrt-${VERSION}-${ARCH}-offline"
+BUNDLE="$WORK/out/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline"
 if (cd "$BUNDLE" && sha256sum --check --strict MANIFEST.sha256 >/dev/null 2>&1); then
   pass "an intact bundle verifies against MANIFEST.sha256"
 else
   fail "an intact bundle does not verify against MANIFEST.sha256"
 fi
 
-if grep -q "pkgs/tollgate-wrt_${VERSION}_${ARCH}.apk" "$BUNDLE/MANIFEST.sha256"; then
+if grep -q "pkgs/tollgate-wrt_${VERSION}_${ARCH}-${TARGET}.apk" "$BUNDLE/MANIFEST.sha256"; then
   pass "manifest covers the tollgate-wrt package"
 else
   fail "manifest does not cover the tollgate-wrt package"
@@ -583,7 +587,7 @@ fi
 # The explicit escape hatch exists (OFFLINE-BUNDLE-2 had not landed when this
 # was written) and MUST change the behaviour and the README.
 if assemble "$WORK/out-noplaceholder" --allow-missing-installer; then
-  if grep -q 'NOT INCLUDED' "$WORK/out-noplaceholder/tollgate-wrt-${VERSION}-${ARCH}-offline/README.md"; then
+  if grep -q 'NOT INCLUDED' "$WORK/out-noplaceholder/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline/README.md"; then
     pass "--allow-missing-installer assembles and records the omission in the README"
   else
     fail "--allow-missing-installer assembled but the README does not record the omission"
@@ -603,7 +607,7 @@ printf '#!/bin/sh\necho router side\n' > "$WORK/installer-src/install-router.sh"
 write_unsafe_keepalive "$WORK/installer-src/templates/99z-mgmt-keepalive"
 chmod +x "$WORK/installer-src/install-offline.sh" "$WORK/installer-src/install-router.sh"
 if assemble "$WORK/out-dir" --installer-dir "$WORK/installer-src"; then
-  BUNDLE_DIR_CASE="$WORK/out-dir/tollgate-wrt-${VERSION}-${ARCH}-offline"
+  BUNDLE_DIR_CASE="$WORK/out-dir/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline"
   missing=""
   for member in install-offline.sh install-router.sh templates/99z-mgmt-keepalive; do
     [ -f "$BUNDLE_DIR_CASE/$member" ] || missing="$missing $member"
@@ -618,7 +622,7 @@ if assemble "$WORK/out-dir" --installer-dir "$WORK/installer-src"; then
   else
     fail "the manifest does not cover the installer's companions"
   fi
-  if tar -tzf "$WORK/out-dir/tollgate-wrt-${VERSION}-${ARCH}-offline.tar.gz" | grep -F './templates/99z-mgmt-keepalive' >/dev/null; then
+  if tar -tzf "$WORK/out-dir/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline.tar.gz" | grep -F './templates/99z-mgmt-keepalive' >/dev/null; then
     pass "the archive carries the keepalive seed"
   else
     fail "the archive does not carry the keepalive seed"
@@ -648,7 +652,7 @@ else
 fi
 
 # The archive carries the documented layout at its ROOT.
-TARBALL="$WORK/out/tollgate-wrt-${VERSION}-${ARCH}-offline.tar.gz"
+TARBALL="$WORK/out/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline.tar.gz"
 if [ -f "$TARBALL" ]; then
   names="$(tar -tzf "$TARBALL")"
   for entry in './pkgs/' './MANIFEST.sha256' './README.md' './install-offline.sh'; do
@@ -909,7 +913,7 @@ cp "$WORK/freshbox-src/templates/99z-mgmt-keepalive" "$WORK/freshbox-seed-input"
 chmod +x "$WORK/freshbox-src/install-offline.sh" "$WORK/freshbox-src/install-router.sh"
 FB_BUNDLE=""
 if assemble "$WORK/out-fresh" --installer-dir "$WORK/freshbox-src"; then
-  FB_BUNDLE="$WORK/out-fresh/tollgate-wrt-${VERSION}-${ARCH}-offline"
+  FB_BUNDLE="$WORK/out-fresh/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline"
   FB_SEED="$FB_BUNDLE/templates/99z-mgmt-keepalive"
   if grep -q 'uci add nodogsplash nodogsplash' "$FB_SEED"; then
     pass "fresh-box: the bundle's seed creates the anonymous nodogsplash section when it is absent"
@@ -1098,7 +1102,7 @@ PY
   cp "$WORK/freshbox-safe-src/templates/99z-mgmt-keepalive" "$WORK/freshbox-safe-seed-input"
   if assemble "$WORK/out-fresh-safe" --installer-dir "$WORK/freshbox-safe-src"; then
     if cmp -s "$WORK/freshbox-safe-seed-input" \
-              "$WORK/out-fresh-safe/tollgate-wrt-${VERSION}-${ARCH}-offline/templates/99z-mgmt-keepalive"; then
+              "$WORK/out-fresh-safe/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline/templates/99z-mgmt-keepalive"; then
       pass "fresh-box: a seed that already carries the guard is shipped byte-for-byte (no double-apply)"
     else
       fail "fresh-box: the repair rewrote a seed that already carried the guard"
@@ -1211,7 +1215,7 @@ printf '#!/bin/sh\necho driver\n' > "$E_SRC/install-offline.sh"
 write_unsafe_keepalive "$E_SRC/templates/99z-mgmt-keepalive"
 chmod +x "$E_SRC/install-offline.sh" "$E_SRC/install-router.sh"
 for name in $E_NAMES; do printf 'fixture apk %s\n' "$name" > "$E_APKS/$name.apk"; done
-printf 'tollgate package\n' > "$E_APKS/tollgate-wrt_${VERSION}_${ARCH}.apk"
+printf 'tollgate package\n' > "$E_APKS/tollgate-wrt_${VERSION}_${ARCH}-${TARGET}.apk"
 
 # ---------------------------------------------------------------------------
 # The FIXED-shape installer: the same stages as the FIXED upstream pin
@@ -1466,7 +1470,7 @@ fi
 
 # G3: the guard PASSES the FIXED-shape stage and ships it byte-identically.
 if assemble_e "$WORK/out-depstage-fixed" --installer-dir "$E_FIX"; then
-  E_BUNDLE="$WORK/out-depstage-fixed/tollgate-wrt-${VERSION}-${ARCH}-offline"
+  E_BUNDLE="$WORK/out-depstage-fixed/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline"
   E_IR="$E_BUNDLE/install-router.sh"
   E_STAGED="$(find "$E_BUNDLE/pkgs" -type f -name '*.apk' | sort)"
   E_PKG_APK="$(find "$E_BUNDLE/pkgs" -type f -name 'tollgate-wrt_*.apk' | head -n1)"
@@ -1568,7 +1572,7 @@ if assemble_e "$WORK/out-depstage-fixed" --installer-dir "$E_FIX"; then
   #     nothing (the guard never writes to the file).
   if assemble_e "$WORK/out-depstage-idem" --installer-dir "$E_FIX"; then
     if cmp -s "$E_IR" \
-              "$WORK/out-depstage-idem/tollgate-wrt-${VERSION}-${ARCH}-offline/install-router.sh"; then
+              "$WORK/out-depstage-idem/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline/install-router.sh"; then
       pass "closure: re-assembling an already-guarded installer changes nothing"
     else
       fail "closure: re-assembling changed the shipped installer"
@@ -1588,7 +1592,7 @@ fi
 if assemble_e "$WORK/out-depstage-nomark" --installer-dir "$E_NOMARK"; then
   pass "landmine: the FIXED stage with the builder's marker comment DELETED is still accepted"
   if cmp -s "$E_NOMARK/install-router.sh" \
-            "$WORK/out-depstage-nomark/tollgate-wrt-${VERSION}-${ARCH}-offline/install-router.sh"; then
+            "$WORK/out-depstage-nomark/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline/install-router.sh"; then
     pass "landmine: the marker-deleted installer is shipped byte-identical"
   else
     fail "landmine: the marker-deleted installer was modified on the way out"
@@ -1666,7 +1670,7 @@ mkbody() { cat > "$F_CASES/$1.stage"; }
 guard_case() {  # guard_case <name> <accept|refuse> <grep-fix|-> <stage-body>
   local name="$1" expect="$2" want="$3" body="$4"
   local dir="$F_CASES/$name"
-  local bundle="$WORK/out-$name/tollgate-wrt-${VERSION}-${ARCH}-offline"
+  local bundle="$WORK/out-$name/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline"
   mkdir -p "$dir/templates"
   {
     printf '#!/bin/sh\n'
@@ -2190,7 +2194,7 @@ chmod +x "$F_BEH_BIN/apk"
 # offers anything but this set fails for a real reason (and the negative controls
 # below have a populated list to be measured against).
 fb_staged() {
-  local bundle="$WORK/out-depstage-fixed/tollgate-wrt-${VERSION}-${ARCH}-offline"
+  local bundle="$WORK/out-depstage-fixed/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline"
   FB_STAGED="$(find "$bundle/pkgs" -type f -name '*.apk' | sort | tr '\n' ' ')"
   FB_PKG="$(find "$bundle/pkgs" -type f -name 'tollgate-wrt_*.apk' | head -n1)"
   FB_EXPECTED="$(printf '%s\n' $FB_STAGED | grep -v 'tollgate-wrt_' \
@@ -2338,7 +2342,7 @@ else
 fi
 
 # --- F8: the provenance count is truthful ---------------------------------------
-F8_README="$WORK/out-depstage-fixed/tollgate-wrt-${VERSION}-${ARCH}-offline/README.md"
+F8_README="$WORK/out-depstage-fixed/tollgate-wrt-${VERSION}-${ARCH}-${TARGET}-offline/README.md"
 if [ -f "$F8_README" ] \
    && grep -qF '10 staged package(s) minus the package under test' "$F8_README"; then
   pass "provenance: the dep-stage note counts the staged closure MINUS the package under test (10, not 11)"

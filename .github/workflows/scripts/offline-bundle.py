@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""Build the per-arch OFFLINE dependency bundle for the tollgate-wrt package.
+"""Build the per-(arch, target) OFFLINE dependency bundle for the tollgate-wrt package.
 
 WHY THIS EXISTS
 ---------------
 `net/tollgate-wrt/Makefile` declares `DEPENDS:=+nodogsplash +jq`. On a router
 with an uplink those two resolve from OpenWrt's own feeds. A freshly flashed
 router with NO uplink has no apk indexes at all, so `apk add <file>.apk`
-cannot resolve them and the install fails. This tool produces, per arch, a
-single release asset
+cannot resolve them and the install fails. This tool produces, per (arch,
+target), a single release asset
 
-    tollgate-wrt-<PKG_VERSION>-<arch>-offline.tar.gz
+    tollgate-wrt-<PKG_VERSION>-<arch>-<target>-offline.tar.gz
+
+The target is in the NAME because one arch can carry several targets
+(mips_24kc = ath79/generic AND ath79/nand), and because the closure itself is
+resolved against the TARGET's indexes -- an ath79-generic bundle is not
+interchangeable with an ath79-nand one. Keep this in lockstep with
+`release-assets.py`'s `bundle_asset()`.
 
 laid out as
 
@@ -2031,7 +2037,13 @@ def guard_router_dep_stage(bundle_dir):
 
 
 def cmd_assemble(args):
-    bundle_name = "tollgate-wrt-%s-%s-offline" % (args.pkg_version, _arch_of(args))
+    # Target-qualified (2026-10-15, Option A): mips_24kc serves both
+    # ath79/generic and ath79/nand, so an arch-only bundle name would make the
+    # two rows collide on one release asset. Keep this in lockstep with
+    # release-assets.py bundle_asset() -- that table is the expected-asset list
+    # the release job refuses to publish outside of.
+    bundle_name = "tollgate-wrt-%s-%s-%s-offline" % (args.pkg_version,
+                                                    _arch_of(args), _target_of(args))
     out_dir = os.path.abspath(args.out)
     bundle_dir = os.path.join(out_dir, bundle_name)
     payload = load_payload(args.payload)
@@ -2178,6 +2190,13 @@ def _arch_of(args):
     return payload["arch"]
 
 
+def _target_of(args):
+    if getattr(args, "target", ""):
+        return args.target
+    payload = load_payload(args.payload)
+    return payload["target"]
+
+
 def load_payload(path):
     if not path:
         raise Fail("assemble needs --payload (from `fetch`)")
@@ -2274,6 +2293,9 @@ def main(argv):
     asm_p.add_argument("--payload", default="")
     asm_p.add_argument("--apks-dir", default="")
     asm_p.add_argument("--arch", default="")
+    asm_p.add_argument("--target", default="",
+                       help="target/subtarget for the bundle NAME "
+                            "(default: the payload's target)")
     asm_p.add_argument("--pkg-version", required=True)
     asm_p.add_argument("--installer", default="",
                        help="a single install-offline.sh for the bundle root")
