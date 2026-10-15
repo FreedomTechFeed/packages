@@ -26,9 +26,16 @@ The `<target>` slot is load-bearing, not decoration: one CPU arch can serve
 several OpenWrt targets (mips_24kc is both ath79/generic -- AR300M -lite/-16 --
 and ath79/nand -- AR300M -nor/-nand), and an arch-only name makes those two rows
 collide on a single asset name. With the target in the name both rows can ship
-at once, and the wizard's per-arch download URL (internal/app/arch.go
-feedAssetURL(arch, target, ext)) resolves to the target the router actually
-reports. Renaming back to an arch-only name is refused by Gate C/K of
+at once.
+
+ORDERING CAVEAT (same text as docs/per-arch-release-assets.md, deliberately
+duplicated so a reader who only opens this table still sees it): the
+installer-side threading of the target (internal/app/arch.go feedAssetURL) is a
+SEPARATE change -- card t_5066bf78 -- not part of the feed lane. Until it lands
+the installer still asks for an arch-only asset, so every install 404s against a
+target-qualified release. The two halves must ship together before the next tag.
+
+Renaming back to an arch-only name is refused by Gate C/K of
 net/tollgate-wrt/test-feed-ci.sh.
 """
 import json
