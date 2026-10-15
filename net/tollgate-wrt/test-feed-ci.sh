@@ -150,9 +150,33 @@ if len(pkgs) != len(rows) or len(offs) != len(bundles):
     print("expected set (%d packages / %d bundles) does not match the matrices "
           "(%d rows / %d rows)" % (len(pkgs), len(offs), len(rows), len(bundles)))
     rc = 1
+# The WHOLE POINT of the change: two rows sharing one arch must not share one
+# asset name. Pinned on the concrete pair that forced the parking (AR300M
+# -lite/-16 ath79-generic vs -nor/-nand ath79-nand, both mips_24kc) so the
+# guarantee is asserted by name, not only in aggregate.
+if len(set(pkgs)) != len(pkgs):
+    dupes = sorted({n for n in pkgs if pkgs.count(n) > 1})
+    print("two release rows collide on one asset name: %s" % ", ".join(dupes))
+    rc = 1
+if len(set(offs)) != len(offs):
+    dupes = sorted({n for n in offs if offs.count(n) > 1})
+    print("two bundle rows collide on one asset name: %s" % ", ".join(dupes))
+    rc = 1
+# Pin the guarantee the change exists for, by name: the two AR300M targets
+# sharing mips_24kc must resolve to DIFFERENT asset names. Asserted through the
+# naming function so it holds even while the ath79-nand row is parked (card t2
+# restores it); the arch-only shape makes these two strings equal.
+ar_lite = run("package-name", version, "mips_24kc", "ath79-generic", "apk").strip()
+ar_nand = run("package-name", version, "mips_24kc", "ath79-nand", "apk").strip()
+if not (ar_lite != ar_nand and ar_lite.endswith("-ath79-generic.apk")
+        and ar_nand.endswith("-ath79-nand.apk")):
+    print("the AR300M targets do not get distinct asset names: ath79/generic -> %r, "
+          "ath79/nand -> %r (they share mips_24kc, so the target slot is the only "
+          "disambiguator)" % (ar_lite, ar_nand))
+    rc = 1
 if rc == 0:
-    print("every release row's asset name carries its target (%d packages, %d bundles)"
-          % (len(pkgs), len(offs)))
+    print("every release row's asset name carries its target (%d packages, %d bundles); "
+          "AR300M g/n share mips_24kc without colliding" % (len(pkgs), len(offs)))
 sys.exit(rc)
 PY
 }
@@ -227,10 +251,15 @@ fi
 # ath79-generic). Every other row is PARKED, not deleted (see Gate K).
 #
 # This gate asserts the load-bearing half of that call: each club device
-# arch must keep BOTH its per-arch .apk release row AND its WAN-less
-# offline bundle -- a bundle whose matching package never publishes
-# advertises an install path that 404s. The negative control deletes the
-# a53 .apk row from a copy and requires the check to refuse it.
+# must keep BOTH its per-arch .apk release row AND its WAN-less offline
+# bundle -- a bundle whose matching package never publishes advertises an
+# install path that 404s.
+#
+# The contract is the (arch, TARGET) pair, not the arch: since 2026-10-15 the
+# target is part of the published asset name, so a club arch repointed to
+# another target 404s on install even though its arch row is still present.
+# Controls: (A) delete the a53 .apk row; (B) repoint the mips_24kc club row to
+# the other target. Both must be REFUSED.
 club_ship_check() { # club_ship_check <release-assets.py> ; rc 0 = club set shippable
     python3 - "$1" <<'PY'
 import json, subprocess, sys
@@ -266,6 +295,18 @@ else
         fail "Gate D: control: the a53 .apk release row was removed and ACCEPTED (the check is vacuous)"
     else
         ok "control: the check refuses a club device arch whose .apk release row was removed"
+    fi
+    rm -f "$_ractl"
+    # Control B: the club row survives but its TARGET is repointed, so the asset
+    # name stops matching what the routers run. Since 2026-10-15 the target is
+    # part of the published name, so a repointed target is a 404 on install even
+    # though the arch row is still present -- the arch-only check would accept it.
+    _ractl=$(mktemp --suffix=.py)
+    sed 's/("mips_24kc", "ath79-generic"/("mips_24kc", "ath79-nand"/g' "$REL_ASSETS" > "$_ractl"
+    if club_ship_check "$_ractl" >/dev/null 2>&1; then
+        fail "Gate D: control: a club arch repointed to another TARGET was ACCEPTED (the arch row alone is not the contract -- the target is in the asset name)"
+    else
+        ok "control: the check refuses a club arch/target pair repointed to the wrong target"
     fi
     rm -f "$_ractl"
 fi
@@ -522,13 +563,29 @@ fi
 # its parked row, which is the opposite of the point.
 gate_j() { # gate_j <workflow> <release-assets.py> ; rc 0 = consistent
     _wf="$1"; _ra="$2"
-    _rel=$(python3 "$_ra" matrix 2>/dev/null | python3 -c 'import json,sys; print(" ".join(sorted({r["arch"] for r in json.load(sys.stdin)["include"]})))' 2>/dev/null)
+    # The unit is now the (arch, target) PAIR, not the arch: since 2026-10-15 one
+    # arch can carry several release rows (mips_24kc ships ath79-generic AND
+    # ath79-nand as real rows), so an arch-only comparison would be satisfied by
+    # the WRONG target's row and report a restore path that does not exist.
+    _rel=$(python3 "$_ra" matrix 2>/dev/null | python3 -c 'import json,sys; print(" ".join(sorted({r["arch"]+"/"+r["target"] for r in json.load(sys.stdin)["include"]})))' 2>/dev/null)
     [ -n "$_rel" ] || { echo "cannot parse release matrix"; return 1; }
-    _wfarches=$(grep -oE '"arch": "[a-z0-9_-]+"' "$_wf" | sed 's/.*"arch": "//;s/"//' | sort -u | tr '\n' ' ')
+    _wfpairs=$(python3 - "$_wf" <<'PY'
+import re, sys
+# ACTIVE and PARKED rows alike: an arch/target pair counts as having a restore
+# path when it appears in the workflow as a row (or a commented-out row), so
+# read the raw text and pair each "arch" with the "target" that follows it.
+src = open(sys.argv[1], encoding="utf-8").read()
+pairs = set()
+for m in re.finditer(r'"arch":\s*"([a-z0-9_-]+)"\s*,\s*"target":\s*"([a-z0-9_-]+)"', src):
+    pairs.add("%s/%s" % (m.group(1), m.group(2)))
+print(" ".join(sorted(pairs)))
+PY
+)
+    [ -n "$_wfpairs" ] || { echo "the PR workflow declares no arch/target rows"; return 1; }
     _rc=0
-    for _a in $_rel; do
-        case " $_wfarches " in *" $_a "*) ;; *)
-            echo "release arch '$_a' has no active-or-parked row in the PR workflow (restore path not visible)"; _rc=1 ;; esac
+    for _p in $_rel; do
+        case " $_wfpairs " in *" $_p "*) ;; *)
+            echo "release row '$_p' (arch/target) has no active-or-parked row in the PR workflow (restore path not visible)"; _rc=1 ;; esac
     done
     return $_rc
 }
@@ -537,16 +594,29 @@ if [ ! -f "$PR_BUILD_WF" ]; then
     fail "Gate J: the vendored PR build workflow is missing: $PR_BUILD_WF"
 else
     if _why=$(gate_j "$PR_BUILD_WF" "$REL_ASSETS"); then
-        ok "every release-lane arch keeps an active-or-parked PR row (parking cannot hide the restore path)"
+        ok "every release-lane arch/target keeps an active-or-parked PR row (parking cannot hide the restore path)"
     else
-        fail "Gate J: PR matrix lost the restore path for a shipped arch: $_why"
+        fail "Gate J: PR matrix lost the restore path for a shipped arch/target: $_why"
     fi
+    # Control A: delete the whole arch's rows -> refused.
     _wfctl=$(mktemp)
     sed '/"arch": "mips_24kc"/d' "$PR_BUILD_WF" > "$_wfctl"
     if gate_j "$_wfctl" "$REL_ASSETS" >/dev/null 2>&1; then
         fail "Gate J: control: a shipped arch whose active-or-parked row was deleted from the PR workflow was ACCEPTED (the check is vacuous)"
     else
         ok "control: the check refuses a shipped arch with no active-or-parked PR row"
+    fi
+    rm -f "$_wfctl"
+    # Control B: delete only ONE target of a multi-target arch. With the
+    # arch-only comparison this passed vacuously (the sibling target's row still
+    # named the arch); the (arch, target) unit must catch it. This is the
+    # control that makes the upgrade to pairs load-bearing.
+    _wfctl=$(mktemp)
+    sed 's/"target": "ath79-generic"/"target": "ath79-OTHER"/g' "$PR_BUILD_WF" > "$_wfctl"
+    if gate_j "$_wfctl" "$REL_ASSETS" >/dev/null 2>&1; then
+        fail "Gate J: control: a shipped (arch, target) pair whose row was repointed to another target was ACCEPTED (an arch-only comparison is vacuous once one arch ships several targets)"
+    else
+        ok "control: the check refuses a repointed arch/target pair (the pair, not the arch, is the unit)"
     fi
     rm -f "$_wfctl"
 fi
@@ -583,6 +653,14 @@ for text in cand:
     if not (isinstance(t, tuple) and len(t) == 4):
         print(f"parked row is not a 4-tuple: {text}")
         rc = 1
+        continue
+    # ...and its TARGET field must be a real value, not blank. Since 2026-10-15
+    # the target is part of the published asset name, so restoring a row whose
+    # target field was emptied would publish `tollgate-wrt_<ver>_<arch>-.apk`.
+    if not all(isinstance(f, str) and f.strip() for f in t):
+        print(f"parked row has a blank field (a restored row would publish a "
+              f"malformed asset name): {text}")
+        rc = 1
 sys.exit(rc)
 PY
 }
@@ -605,11 +683,22 @@ else
     rm -f "$_kctl"
     # Control B: a corrupted parked row (no longer paste-back-able) must be refused.
     _kctl=$(mktemp --suffix=.py)
-    sed '/^    # ("x86_64", "x86-64", "25\.12\.5", "apk"),$/s/"apk"),/"apk),/' "$REL_ASSETS" > "$_kctl"
+    sed 's/("x86_64", "x86-64", "25\.12\.5", "apk")/("x86_64" "x86-64" "25.12.5" "apk")/' "$REL_ASSETS" > "$_kctl"
     if parked_rows_check "$_kctl" >/dev/null 2>&1; then
         fail "Gate K: control: a corrupted (unrestorable) parked row was ACCEPTED (the check is vacuous)"
     else
         ok "control: the check refuses a corrupted parked row"
+    fi
+    rm -f "$_kctl"
+    # Control C: a parked row whose TARGET field was emptied must be refused.
+    # Since 2026-10-15 the target is part of the published asset name, so
+    # restoring such a row would publish tollgate-wrt_<ver>_<arch>-.apk.
+    _kctl=$(mktemp --suffix=.py)
+    sed 's/("mips_24kc", "ath79-nand", "25\.12\.5", "apk")/("mips_24kc", "", "25.12.5", "apk")/' "$REL_ASSETS" > "$_kctl"
+    if parked_rows_check "$_kctl" >/dev/null 2>&1; then
+        fail "Gate K: control: a parked row with an EMPTY target field was ACCEPTED (restoring it would publish a malformed asset name)"
+    else
+        ok "control: the check refuses a parked row whose target field is empty"
     fi
     rm -f "$_kctl"
 fi
@@ -676,13 +765,16 @@ else
 fi
 rm -f .bundle-gate.$$
 
-# The bundle carries the tollgate-wrt .apk for its arch, so the package matrix
-# entry must still exist or the bundle would ship nothing to install.
+# The bundle carries the tollgate-wrt .apk for its arch AND target, so the
+# package matrix entry must still exist or the bundle would ship nothing to
+# install. Since 2026-10-15 the lookup is by (arch, target): mips_24kc ships
+# both ath79-generic and ath79-nand, so an arch-only lookup would be satisfied
+# by the other target's row and the bundle's own package could be absent.
 if python3 "$ROOT/.github/workflows/scripts/release-assets.py" matrix \
-     | python3 -c 'import json,sys; d=json.load(sys.stdin)["include"]; sys.exit(0 if any(r["arch"]=="mips_24kc" and r["ext"]=="apk" for r in d) else 1)'; then
-    ok "the mips_24kc .apk is still built (the bundle ships it)"
+     | python3 -c 'import json,sys; d=json.load(sys.stdin)["include"]; sys.exit(0 if any(r["arch"]=="mips_24kc" and r["target"]=="ath79-generic" and r["ext"]=="apk" for r in d) else 1)'; then
+    ok "the mips_24kc/ath79-generic .apk is still built (the bundle ships it)"
 else
-    fail "Gate F: the mips_24kc .apk is no longer in the build matrix (the bundle would ship nothing)"
+    fail "Gate F: the mips_24kc/ath79-generic .apk is no longer in the build matrix (the bundle would ship nothing)"
 fi
 
 # --- Gate L: the package ships ONLY bytes upstream can accept ----------------
