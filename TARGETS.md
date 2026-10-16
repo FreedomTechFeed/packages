@@ -33,7 +33,7 @@ up; `—` = not yet attempted.
 
 | arch | target | example device | validated by | date | RC | notes |
 |------|--------|----------------|--------------|------|----|-------|
-| `aarch64_cortex-a53` | `mediatek-filogic` | GL-MT3000, GL-MT6000, Cudy WR3000 | c03rad0r | 2026-10-15 | rc6 | MT3000 (apk/25.12.5) + MT6000 (opkg/24.10.2) upgraded in place to `0.6.0_rc6-r1`; service + all entry ports up |
+| `aarch64_cortex-a53` | `mediatek-filogic` | GL-MT3000, GL-MT6000, Cudy WR3000, CF-WR632AX | c03rad0r | 2026-10-15 | rc6 | MT3000 (apk/25.12.5) + MT6000 (opkg/24.10.2) upgraded in place to `0.6.0_rc6-r1`; service + all entry ports up. CF-WR632AX shares this target (OpenWrt profiles `comfast_cf-wr632ax` / `-ubootmod`) so the same published assets apply, but no install has been run on that device yet |
 | `mips_24kc` | `ath79-generic` | GL.iNet AR300M `-lite` / `-16` | — | — | rc6 | build + offline bundle published; hardware validate pending |
 | `mips_24kc` | `ath79-nand` | GL.iNet AR300M `-nor` / `-nand` | — | — | rc6 | newly un-parked in rc6 (target-qualified names end the arch-only collision) |
 | `aarch64_cortex-a72` | `bcm27xx-bcm2711` | Raspberry Pi 4 family | — | — | rc6 | |
