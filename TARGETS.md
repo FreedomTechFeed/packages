@@ -47,6 +47,46 @@ up; `—` = not yet attempted.
 kept visible (parked) in `release-assets.py`, and `net/tollgate-wrt/test-feed-ci.sh`
 Gate K enforces that.
 
+## Device coverage vs arch coverage — what a row here does and does not mean
+
+A row is keyed on the **(arch, target) pair**, so it covers **every device in that
+target**, not only the ones named in the `example device` column. Naming a device
+adds no build and no asset: the target's already-published
+`tollgate-wrt_<version>_<arch>-<target>.{apk,ipk}` and its offline bundle apply
+unchanged.
+
+Two things a row does **not** guarantee, both measured (2026-10-16) for
+CF-WR632AX on `aarch64_cortex-a53` / `mediatek-filogic`:
+
+1. **The offline bundle's assumed base image.** `OFFLINE_BUNDLES` in
+   `.github/workflows/scripts/release-assets.py` carries a **device `profile`**
+   whose `device_packages` are assumed already present, so they are omitted from
+   the WAN-less bundle. That row names `glinet_gl-mt3000`. Checked against
+   OpenWrt 25.12.5 `targets/mediatek/filogic/profiles.json`: the MT3000 and
+   CF-WR632AX profiles declare the **same five** `device_packages`
+   (`kmod-hwmon-pwmfan`, `kmod-mt7915e`, `kmod-mt7981-firmware`, `kmod-usb3`,
+   `mt7981-wo-firmware`), so the existing bundle is sufficient for CF-WR632AX and
+   no `OFFLINE_BUNDLES` change is needed. A device whose profile assumes **fewer**
+   packages than the row's would need its own bundle row — that is the check to
+   repeat per device, and `profile ""` (default_packages only) is the safe
+   direction.
+
+2. **The onboarding wizard's model table.** A published asset with no wizard entry
+   is **invisible** — the operator gets "Unknown GL.iNet model" and must flash by
+   hand. That table is `glModelMap` in
+   `OpenTollGate/tollgate-installer` (`internal/app/images.go`), reached through
+   `glModelFromBoard` (`internal/app/deploy.go`), which normalises an OpenWrt
+   `board_name` into a map key. **CF-WR632AX is absent from it**, and its
+   `board_name` is `comfast,cf-wr632ax` (OpenWrt declares
+   `SUPPORTED_DEVICES += cf-wr632ax` on the COMFAST device), so the current prefix
+   guard — which accepts only `gl-` — rejects it. Adding the model requires the
+   map entry **and** widening that guard; see the installer PR that follows.
+
+> **Stale pointer, fixed here:** this file previously referred to the wizard's
+> device list as `net4sats-wizard-go arch.go`. That project has been retired in
+> favour of `OpenTollGate/tollgate-installer`, so the reference now points at the
+> repo that actually ships.
+
 ## How to add your result (open a PR)
 
 1. Install (or upgrade to) the RC on your router and confirm the service is up:
