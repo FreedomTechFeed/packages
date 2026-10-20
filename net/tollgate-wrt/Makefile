@@ -868,6 +868,27 @@ define Build/Compile
 		$(GO_PKG_VARS) go build -trimpath \
 			-ldflags "$(GO_PKG_LDFLAGS_X:%=-X %) -X main.version=$(PKG_SOURCE_TAG)-g$(PKG_SOURCE_SHA7)" \
 			-o $(GO_PKG_BUILD_BIN_DIR)/tollgate-cli .
+# The CVM control-plane daemon (src/cmd/tollgate-cvm, its own module): the
+# THIRD binary upstream ships (packaging/Makefile PREBUILT_CVM). Built with
+# NO version ldflags on purpose -- the daemon's build identity travels in
+# its CEP-6 announcement pubkey, and upstream's own lanes stage it the same
+# way (local-build-ipk.sh, build-sdk-package.sh). Upstream broke its apk
+# lane for exactly this omission (#1020), then added the generated build
+# contract (upstream #1021: packaging/build-contract.json IN the release
+# tarball) so feeds stop re-deriving the binary set by hand.
+#
+# PRESENCE-CONDITIONAL, deliberately: the current pin (cf7cad3) predates
+# the daemon's landing, and OpenWrt recipes must build what the PINNED tree
+# contains, not what upstream main contains. The contract fence
+# (test-build-contract.sh Gate 1) refuses a pin that carries the contract
+# but not the stanza -- and the contract lands in the same tree that
+# guarantees the module exists -- so from the next repin the conditional is
+# always-true and the fence owns the set. Older pins skip both halves.
+	if [ -d $(PKG_BUILD_DIR)/cmd/tollgate-cvm ]; then \
+		cd $(PKG_BUILD_DIR)/cmd/tollgate-cvm && \
+			$(GO_PKG_VARS) go build -trimpath \
+				-o $(GO_PKG_BUILD_BIN_DIR)/tollgate-cvm .; \
+	fi
 endef
 
 define Package/tollgate-wrt/preinst
@@ -1023,6 +1044,9 @@ define Package/tollgate-wrt/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/tollgate-module-basic-go $(1)/usr/bin/tollgate-wrt
 	$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/tollgate-cli $(1)/usr/bin/tollgate
+	@if [ -e $(GO_PKG_BUILD_BIN_DIR)/tollgate-cvm ]; then \
+		$(INSTALL_BIN) $(GO_PKG_BUILD_BIN_DIR)/tollgate-cvm $(1)/usr/bin/tollgate-cvm; \
+	fi
 
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) $(PKG_TARBALL_DIR)/packaging/files/etc/init.d/tollgate-wrt $(1)/etc/init.d/
