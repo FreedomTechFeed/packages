@@ -1,0 +1,51 @@
+name: Build contract fence
+
+# The feed consumes upstream's build contract (packaging/build-contract.json,
+# generated in the module repo and shipped IN the release tarball — upstream
+# #1021) instead of re-deriving the release facts by hand. This lane runs
+# net/tollgate-wrt/test-build-contract.sh:
+#
+#   Gate 1  recipe-vs-contract binary parity, both directions (the #1020
+#           class: upstream's own apk lane broke on a carrier missing a
+#           binary the authority declared)
+#   Gate 2  contract go minimum <= THIS feed's golang, read from the feed's
+#           own lang/golang/golang-values.mk — a pin that cannot compile
+#           here fails in seconds, not after a 40-min SDK bootstrap
+#   Gate 3  contract modules exist in the pinned tarball
+#
+# TG_CONTRACT_MODE defaults to auto (pre-contract pins warn and pass); flip
+# the default to required in the test (or below) once the pin moves past the
+# contract's landing commit.
+
+on:
+  push:
+    paths:
+      - 'net/tollgate-wrt/Makefile'
+      - 'net/tollgate-wrt/test-build-contract.sh'
+      - 'lang/golang/golang-values.mk'
+      - 'lang/golang/**/Makefile'
+      - '.github/workflows/contract-fence.yml'
+  pull_request:
+    paths:
+      - 'net/tollgate-wrt/Makefile'
+      - 'net/tollgate-wrt/test-build-contract.sh'
+      - 'lang/golang/golang-values.mk'
+      - 'lang/golang/**/Makefile'
+      - '.github/workflows/contract-fence.yml'
+  schedule:
+    - cron: '37 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce the pinned release's build contract
+        run: |
+          set -e
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq
+          sh net/tollgate-wrt/test-build-contract.sh

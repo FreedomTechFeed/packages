@@ -46,6 +46,12 @@ fork-local net/tollgate-wrt/test-devendored.sh
 fork-local net/tollgate-wrt/test-feed-ci.sh
 fork-local net/tollgate-wrt/test-pkg-tarball-parity.sh
 fork-local net/tollgate-wrt/test-uci-defaults-order.sh
+# Consumes upstream's generated build contract from the pinned tarball. The
+# CONTRACT travels upstream (it ships in the release tarball), but this
+# enforcement reads this fork's own lang/golang and cites fork CI in its docs,
+# so the gate itself is house machinery -- an upstream-shaped variant can be
+# derived later if openwrt/packages ever wants one.
+fork-local net/tollgate-wrt/test-build-contract.sh
 # The ecosystem/bug-routing map. It names this fork's CI and the FreedomTechFeed
 # wrapper explicitly, so it is fork-local documentation, not submission content.
 fork-local net/tollgate-wrt/README.md
