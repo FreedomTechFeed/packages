@@ -63,16 +63,16 @@ fail() { echo "FAIL: $1" >&2; echo "test-build-contract: FAILED" >&2; exit 1; }
 warn() { echo "WARN: $1" >&2; }
 ok()   { echo "ok:   $1"; }
 
-command -v curl >/dev/null 2>&1 || fail "curl is required"
-command -v jq >/dev/null 2>&1 || fail "jq is required"
-[ -f "$MK" ] || fail "$MK not found"
+command -v curl >/dev/null 2>&1 || fail "Gate P: curl is required"
+command -v jq >/dev/null 2>&1 || fail "Gate P: jq is required"
+[ -f "$MK" ] || fail "Gate P: $MK not found"
 
 LC_ALL=C; export LC_ALL
 
 mkvar() { sed -n "s/^$1:=//p" "$MK" | head -n 1; }
 
 PKG_SOURCE_VERSION=$(mkvar PKG_SOURCE_VERSION)
-[ -n "$PKG_SOURCE_VERSION" ] || fail "could not read PKG_SOURCE_VERSION from $MK"
+[ -n "$PKG_SOURCE_VERSION" ] || fail "Gate P: could not read PKG_SOURCE_VERSION from $MK"
 
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/tg-contract.XXXXXX")
 trap 'rm -rf "$SCRATCH"' EXIT INT TERM
@@ -87,14 +87,14 @@ if [ -z "$CONTRACT" ]; then
     if [ ! -s "$TARBALL" ]; then
         URL="https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$PKG_SOURCE_VERSION"
         echo "--- fetching $URL"
-        curl -fsSL "$URL" -o "$TARBALL" || fail "cannot fetch the pinned tarball"
+        curl -fsSL "$URL" -o "$TARBALL" || fail "Gate P: cannot fetch the pinned tarball"
     fi
     CONTRACT="$SCRATCH/build-contract.json"
     if ! tar -xzOf "$TARBALL" \
          "tollgate-module-basic-go-$PKG_SOURCE_VERSION/packaging/build-contract.json" \
          > "$CONTRACT" 2>/dev/null; then
         if [ "$CONTRACT_MODE" = "required" ]; then
-            fail "the pinned tarball carries no packaging/build-contract.json and TG_CONTRACT_MODE=required"
+            fail "Gate A: the pinned tarball carries no packaging/build-contract.json and TG_CONTRACT_MODE=required"
         fi
         warn "pin $PKG_SOURCE_VERSION predates the build contract (upstream #1021); nothing to enforce"
         warn "flip TG_CONTRACT_MODE to required once the pin moves past the contract's landing"
