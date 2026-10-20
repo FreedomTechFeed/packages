@@ -52,6 +52,9 @@ fork-local net/tollgate-wrt/test-uci-defaults-order.sh
 # so the gate itself is house machinery -- an upstream-shaped variant can be
 # derived later if openwrt/packages ever wants one.
 fork-local net/tollgate-wrt/test-build-contract.sh
+# The ecosystem/bug-routing map. It names this fork's CI and the FreedomTechFeed
+# wrapper explicitly, so it is fork-local documentation, not submission content.
+fork-local net/tollgate-wrt/README.md
 # Gate L itself, and this manifest. Self-referential on purpose: the enforcement
 # machinery is fork-local too, so it cannot leak into an upstream PR.
 fork-local net/tollgate-wrt/test-upstream-fidelity.sh

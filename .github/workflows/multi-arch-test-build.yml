@@ -52,6 +52,22 @@ name: Test and Build
 
 on:
   pull_request:
+    # PATH HYGIENE (measured 2026-10-20, run 39404946887): a README-only PR
+    # (#91, one file under net/tollgate-wrt/) spawned the FULL 8-job SDK
+    # matrix -- ~31 min/job, the Build step alone measured at ~1200 s (see
+    # change #4 below) -- for zero signal: nothing a docs PR changes reaches
+    # a compiler. ~4 runner-hours per docs push, at the account's runner cap
+    # (the same cap the 160-minute stale-run incident fought). Docs-only
+    # changes skip this lane entirely; the cheap always-on PR lanes
+    # (feed-gates, tarball parity, build-contract fence) still run on every
+    # PR, and any PR that also touches code gets the full matrix as before.
+    # This deliberately does NOT revisit the widened-matrix decision
+    # (2026-10-15) or the always-build-tollgate rationale (change #1):
+    # workflow/recipe PRs still build the package; markdown PRs build
+    # nothing because there is nothing to build.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
 
 # Upstream parity: this stanza is verbatim from
 # openwrt/actions-shared-workflows/.github/workflows/multi-arch-test-build.yml.

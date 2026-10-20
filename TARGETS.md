@@ -33,7 +33,7 @@ up; `—` = not yet attempted.
 
 | arch | target | example device | validated by | date | RC | notes |
 |------|--------|----------------|--------------|------|----|-------|
-| `aarch64_cortex-a53` | `mediatek-filogic` | GL-MT3000, GL-MT6000, Cudy WR3000 | c03rad0r | 2026-10-15 | rc6 | MT3000 (apk/25.12.5) + MT6000 (opkg/24.10.2) upgraded in place to `0.6.0_rc6-r1`; service + all entry ports up |
+| `aarch64_cortex-a53` | `mediatek-filogic` | GL-MT3000, GL-MT6000, Cudy WR3000, CF-WR632AX | c03rad0r | 2026-10-15 | rc6 | MT3000 (apk/25.12.5) + MT6000 (opkg/24.10.2) upgraded in place to `0.6.0_rc6-r1`; service + all entry ports up. CF-WR632AX shares this target (OpenWrt profiles `comfast_cf-wr632ax` / `-ubootmod`) so the same published assets apply, but no install has been run on that device yet |
 | `mips_24kc` | `ath79-generic` | GL.iNet AR300M `-lite` / `-16` | — | — | rc6 | build + offline bundle published; hardware validate pending |
 | `mips_24kc` | `ath79-nand` | GL.iNet AR300M `-nor` / `-nand` | — | — | rc6 | newly un-parked in rc6 (target-qualified names end the arch-only collision) |
 | `aarch64_cortex-a72` | `bcm27xx-bcm2711` | Raspberry Pi 4 family | — | — | rc6 | |
@@ -46,6 +46,46 @@ up; `—` = not yet attempted.
 **not** shipped — it is not a device the review club runs. Its restore path is
 kept visible (parked) in `release-assets.py`, and `net/tollgate-wrt/test-feed-ci.sh`
 Gate K enforces that.
+
+## Device coverage vs arch coverage — what a row here does and does not mean
+
+A row is keyed on the **(arch, target) pair**, so it covers **every device in that
+target**, not only the ones named in the `example device` column. Naming a device
+adds no build and no asset: the target's already-published
+`tollgate-wrt_<version>_<arch>-<target>.{apk,ipk}` and its offline bundle apply
+unchanged.
+
+Two things a row does **not** guarantee, both measured (2026-10-16) for
+CF-WR632AX on `aarch64_cortex-a53` / `mediatek-filogic`:
+
+1. **The offline bundle's assumed base image.** `OFFLINE_BUNDLES` in
+   `.github/workflows/scripts/release-assets.py` carries a **device `profile`**
+   whose `device_packages` are assumed already present, so they are omitted from
+   the WAN-less bundle. That row names `glinet_gl-mt3000`. Checked against
+   OpenWrt 25.12.5 `targets/mediatek/filogic/profiles.json`: the MT3000 and
+   CF-WR632AX profiles declare the **same five** `device_packages`
+   (`kmod-hwmon-pwmfan`, `kmod-mt7915e`, `kmod-mt7981-firmware`, `kmod-usb3`,
+   `mt7981-wo-firmware`), so the existing bundle is sufficient for CF-WR632AX and
+   no `OFFLINE_BUNDLES` change is needed. A device whose profile assumes **fewer**
+   packages than the row's would need its own bundle row — that is the check to
+   repeat per device, and `profile ""` (default_packages only) is the safe
+   direction.
+
+2. **The onboarding wizard's model table.** A published asset with no wizard entry
+   is **invisible** — the operator gets "Unknown GL.iNet model" and must flash by
+   hand. That table is `glModelMap` in
+   `OpenTollGate/tollgate-installer` (`internal/app/images.go`), reached through
+   `glModelFromBoard` (`internal/app/deploy.go`), which normalises an OpenWrt
+   `board_name` into a map key. **CF-WR632AX is absent from it**, and its
+   `board_name` is `comfast,cf-wr632ax` (OpenWrt declares
+   `SUPPORTED_DEVICES += cf-wr632ax` on the COMFAST device), so the current prefix
+   guard — which accepts only `gl-` — rejects it. Adding the model requires the
+   map entry **and** widening that guard; see the installer PR that follows.
+
+> **Stale pointer, fixed here:** this file previously referred to the wizard's
+> device list as `net4sats-wizard-go arch.go`. That project has been retired in
+> favour of `OpenTollGate/tollgate-installer`, so the reference now points at the
+> repo that actually ships.
 
 ## How to add your result (open a PR)
 
