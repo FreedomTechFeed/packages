@@ -527,7 +527,10 @@ PKG_NAME:=tollgate-wrt
 #   merged module cf7cad34 (#940, bounded mint registration); PKG_SOURCE_TAG
 #   stays v0.6.0-rc4 because the module repo-root VERSION is unchanged at that
 #   commit, and the portal lock is UNCHANGED.
-PKG_VERSION:=0.6.0_rc6
+# v0.6.0 is the stable release of the rc6 code. The module release commit
+# 9364f2e adds VERSION/CHANGELOG/RELEASE-NOTES only; runtime code is still
+# cf7cad3. The post-rc6 feature commits on module main are not part of it.
+PKG_VERSION:=0.6.0
 # PKG_SOURCE_VERSION is the upstream source pin: an immutable 40-char COMMIT
 # SHA, NOT a tag and NOT a branch. A shared community feed must not chase a
 # moving branch (hash churn, unreproducible builds, every consumer gets
@@ -603,7 +606,9 @@ PKG_VERSION:=0.6.0_rc6
 # RC2 advances it to f89c879, RC3 to 27baf22, RC4 to 8a5c8b38 -- the MERGED
 # module main after #913 (the fixed-default-credential reversal) -- and RC5 to
 # cf7cad34, the MERGED module main after #940 (bounded mint registration).
-PKG_SOURCE_VERSION:=cf7cad34677e87e775e7f16786b1bbf18c4bc8bc
+# v0.6.0 pins 9364f2e -- the release commit on top of cf7cad3 that only
+# records VERSION=v0.6.0, the assembled changelog and the release notes.
+PKG_SOURCE_VERSION:=9364f2e02ee86805c03fbd687ddc01ea4cd938a3
 # PKG_SOURCE_TAG names the upstream release this commit belongs to. It is used
 # ONLY for the version string baked into the binaries, so a tester sees which
 # release the build came from instead of a bare SHA.
@@ -626,7 +631,9 @@ PKG_SOURCE_VERSION:=cf7cad34677e87e775e7f16786b1bbf18c4bc8bc
 # writes a setup marker no upstream build writes, and an unchanged marker sends
 # an upgrade down 99-tollgate-setup's same-version path where the new full-setup
 # work never runs.
-PKG_SOURCE_TAG:=v0.6.0-rc4
+# v0.6.0 is the first stable tag: the repo-root VERSION at 9364f2e is
+# v0.6.0, so the binary and the setup marker both report the stable release.
+PKG_SOURCE_TAG:=v0.6.0
 # Short SHA for that human-facing version string; the full SHA stays in
 # GitCommit, which is what a bug report should quote.
 PKG_SOURCE_SHA7:=$(shell printf '%s' $(PKG_SOURCE_VERSION) | cut -c1-7)
@@ -731,7 +738,11 @@ PKG_SOURCE:=tollgate-module-basic-go-$(PKG_SOURCE_VERSION).tar.gz
 # 0dd6df217872b3836dd484c0a8110019c51372cff8c1d0e9e21bbe8a081f53cd -- the value
 # committed below (codeload reports 1884063 bytes for it).
 PKG_SOURCE_URL:=https://codeload.github.com/OpenTollGate/tollgate-module-basic-go/tar.gz/$(PKG_SOURCE_VERSION)?
-PKG_HASH:=0dd6df217872b3836dd484c0a8110019c51372cff8c1d0e9e21bbe8a081f53cd
+# v0.6.0 re-calibrated with the same construction. Replaying it for the
+# outgoing pin reproduced 0dd6df21... exactly, so the value below is trustworthy:
+#   sha256(https://codeload.github.com/.../tar.gz/9364f2e...?/tollgate-module-basic-go-9364f2e....tar.gz)
+# = f010e7559e0fa116aae9caf76c8665494c2839d08efccfa25fe6e46441c6a868
+PKG_HASH:=f010e7559e0fa116aae9caf76c8665494c2839d08efccfa25fe6e46441c6a868
 
 PKG_MAINTAINER:=Felix <felix@tollgate.me>
 PKG_LICENSE:=GPL-3.0-only
