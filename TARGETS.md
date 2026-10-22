@@ -38,7 +38,7 @@ up; `—` = not yet attempted.
 | `mips_24kc` | `ath79-nand` | GL.iNet AR300M `-nor` / `-nand` | — | — | rc6 | newly un-parked in rc6 (target-qualified names end the arch-only collision) |
 | `aarch64_cortex-a72` | `bcm27xx-bcm2711` | Raspberry Pi 4 family | — | — | rc6 | |
 | `arm_cortex-a7_neon-vfpv4` | `bcm27xx-bcm2709` | Raspberry Pi 2 family | — | — | rc6 | arch is `…_neon-vfpv4` (the target's package arch), not bare `arm_cortex-a7` |
-| `mipsel_24kc` | `ramips-mt7621` | MT7621 routers | — | — | rc6 | target is the full path `ramips-mt7621` |
+| `mipsel_24kc` | `ramips-mt7621` | MT7621 routers · **D-Link COVR-X1860 A1** | — | — | v0.6.0 | target is the full path `ramips-mt7621`. **COVR-X1860 A1** (`dlink,covr-x1860-a1`) named as a club candidate: OpenWrt 25.12.5 ships `openwrt-25.12.5-ramips-mt7621-dlink_covr-x1860-a1-squashfs-{factory,recovery,sysupgrade}.bin` and this feed's `tollgate-wrt_0.6.0_mipsel_24kc-ramips-mt7621.{apk,ipk}` is arch-correct, but **no install has run on a COVR yet** — validation in progress, see "Devices in validation" below |
 | `mips64_octeonplus` | `octeon-generic` | Octeon boards | — | — | rc6 | |
 | `x86_64` | `x86-64` | x86 VMs / boxes | — | — | rc6 | |
 
@@ -86,6 +86,44 @@ CF-WR632AX on `aarch64_cortex-a53` / `mediatek-filogic`:
 > device list as `net4sats-wizard-go arch.go`. That project has been retired in
 > favour of `OpenTollGate/tollgate-installer`, so the reference now points at the
 > repo that actually ships.
+
+## Devices in validation — known blockers before the row can say `validated`
+
+> **Update this section in the same PR that changes a device's status.** A row
+> reading `—` is not a failure; it is a device nobody has finished. What is NOT
+> acceptable is discovering the same blocker twice.
+
+### D-Link COVR-X1860 A1 — `mipsel_24kc` / `ramips-mt7621`
+
+| Fact | Value / evidence |
+|---|---|
+| OpenWrt board name | `dlink,covr-x1860-a1` (`/tmp/sysinfo/model` = `D-Link COVR-X1860 A1`) |
+| Stock firmware found | vanilla OpenWrt **24.10.2** r28739 (opkg lane), no TollGate installed |
+| Target for v0.6.0 (apk) | requires OpenWrt **25.12.5**, so a flash is part of the install |
+| Official image | `openwrt-25.12.5-ramips-mt7621-dlink_covr-x1860-a1-squashfs-sysupgrade.bin`, sha256 `72ab619a…81203a98` (verified against downloads.openwrt.org) |
+| Feed asset | `tollgate-wrt_0.6.0_mipsel_24kc-ramips-mt7621.{apk,ipk}` — arch/target correct, no new build needed |
+| Offline bundle | the `OFFLINE_BUNDLES` row carries `profile ""` (default_packages only) — the safe direction, no per-device row needed |
+
+**Blocker 1 (installer, FIXED pending review).** The wizard's firmware table was
+GL.iNet-only and `glModelFromBoard` refused any board not prefixed `gl-`, so
+`ForceFlash` on this device died with *"Unknown GL.iNet model"* — the device was
+invisible to the operator, exactly the gap documented in §2 above. Fix:
+`OpenTollGate/tollgate-installer` — add the `dlink_covr-x1860-a1` row and let
+the table decide resolution instead of a name pattern. **Until that lands, this
+router can only be installed by flashing OpenWrt 25.12.5 by hand and then running
+the wizard's package lane** (which already detects arch+target generically).
+
+**Blocker 2 (bench topology, NOT a product defect).** The wizard drives the
+router over SSH on its **LAN** address. On the serial bench the COVR's LAN port
+had `rx_packets = 0` — nothing cabled to it — so the wizard could not be driven
+at all. The WAN port was cabled and had internet. *Check the LAN cable before
+concluding anything about the wizard.*
+
+**Trap found on this device.** Dropbear arrived with `PasswordAuth=off` **and**
+`RootPasswordAuth=off` (publickey-only) with an `authorized_keys` entry that
+matched no key in our fleet. Serial console is therefore the only way in until
+password auth is enabled. Recorded so the next person does not spend an hour on
+"SSH is broken".
 
 ## How to add your result (open a PR)
 
