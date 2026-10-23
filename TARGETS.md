@@ -38,7 +38,7 @@ up; `—` = not yet attempted.
 | `mips_24kc` | `ath79-nand` | GL.iNet AR300M `-nor` / `-nand` | — | — | rc6 | newly un-parked in rc6 (target-qualified names end the arch-only collision) |
 | `aarch64_cortex-a72` | `bcm27xx-bcm2711` | Raspberry Pi 4 family | — | — | rc6 | |
 | `arm_cortex-a7_neon-vfpv4` | `bcm27xx-bcm2709` | Raspberry Pi 2 family | — | — | rc6 | arch is `…_neon-vfpv4` (the target's package arch), not bare `arm_cortex-a7` |
-| `mipsel_24kc` | `ramips-mt7621` | MT7621 routers · **D-Link COVR-X1860 A1** | — | — | v0.6.0 | target is the full path `ramips-mt7621`. **COVR-X1860 A1** (`dlink,covr-x1860-a1`) named as a club candidate: OpenWrt 25.12.5 ships `openwrt-25.12.5-ramips-mt7621-dlink_covr-x1860-a1-squashfs-{factory,recovery,sysupgrade}.bin` and this feed's `tollgate-wrt_0.6.0_mipsel_24kc-ramips-mt7621.{apk,ipk}` is arch-correct, but **no install has run on a COVR yet** — validation in progress, see "Devices in validation" below |
+| `mipsel_24kc` | `ramips-mt7621` | MT7621 routers · **D-Link COVR-X1860** | c08r4d0r (manual) | 2026-10-23 | v0.6.0 | COVR-X1860 **installed and working** — see "Devices in validation" below for the full evidence trail. Target is the full path `ramips-mt7621`. A second COVR unit was onboarded end-to-end by hand and confirmed working; the wizard path (flash → install) is also proven, but its post-restart verification is broken — details below |
 | `mips64_octeonplus` | `octeon-generic` | Octeon boards | — | — | rc6 | |
 | `x86_64` | `x86-64` | x86 VMs / boxes | — | — | rc6 | |
 
@@ -87,43 +87,80 @@ CF-WR632AX on `aarch64_cortex-a53` / `mediatek-filogic`:
 > favour of `OpenTollGate/tollgate-installer`, so the reference now points at the
 > repo that actually ships.
 
-## Devices in validation — known blockers before the row can say `validated`
+## Device notes — status, evidence, and open defects
 
-> **Update this section in the same PR that changes a device's status.** A row
-> reading `—` is not a failure; it is a device nobody has finished. What is NOT
-> acceptable is discovering the same blocker twice.
+> **Update this section in the same PR that changes a device's status.** Status
+> `validated` means an install completed and the box works; it does **not** mean
+> every tooling path to that install is healthy. Where a path is broken, say so
+> here rather than leaving the next person to rediscover it.
 
-### D-Link COVR-X1860 A1 — `mipsel_24kc` / `ramips-mt7621`
+### D-Link COVR-X1860 — `mipsel_24kc` / `ramips-mt7621` — **VALIDATED**
 
 | Fact | Value / evidence |
 |---|---|
+| Status | **validated** — `tollgate-wrt-0.6.0_rc6-r1 mipsel_24kc` installed and running; `API :2121 listening and /var/run/tollgate.sock present` |
+| Validated by | c08r4d0r, manual onboarding (2026-10-23), confirmed working end-to-end by hand |
 | OpenWrt board name | `dlink,covr-x1860-a1` (`/tmp/sysinfo/model` = `D-Link COVR-X1860 A1`) |
-| Stock firmware found | vanilla OpenWrt **24.10.2** r28739 (opkg lane), no TollGate installed |
-| Target for v0.6.0 (apk) | requires OpenWrt **25.12.5**, so a flash is part of the install |
-| Official image | `openwrt-25.12.5-ramips-mt7621-dlink_covr-x1860-a1-squashfs-sysupgrade.bin`, sha256 `72ab619a…81203a98` (verified against downloads.openwrt.org) |
-| Feed asset | `tollgate-wrt_0.6.0_mipsel_24kc-ramips-mt7621.{apk,ipk}` — arch/target correct, no new build needed |
+| OpenWrt target | **25.12.5**, `mipsel_24kc` / `ramips-mt7621`, package manager **apk** |
+| Official image | `openwrt-25.12.5-ramips-mt7621-dlink_covr-x1860-a1-squashfs-sysupgrade.bin`, sha256 `72ab619a…81203a98` (verified against `downloads.openwrt.org` and re-verified on the device) |
+| Feed artifact | `tollgate-wrt_0.6.0_rc6_mipsel_24kc-ramips-mt7621.apk` — digest `0c361f2d…` matched the published digest at install time |
+| Post-install layout | `br-lan 192.168.77.1/24`, `br-private 192.168.78.1/24`; device code assigned **AF92** → hostname `tollgate-AF92` |
+| Merchant advertising | `kind:10021` on `:2121` with real pricing (`metric=bytes`, `step_size=22020096`, `price_per_step cashu 1 sat`) |
+| Ports up | `:2050` NDS portal, `:2051` portal SPA, `:8080` LuCI, `:2121` API |
 | Offline bundle | the `OFFLINE_BUNDLES` row carries `profile ""` (default_packages only) — the safe direction, no per-device row needed |
 
-**Blocker 1 (installer, FIXED pending review).** The wizard's firmware table was
-GL.iNet-only and `glModelFromBoard` refused any board not prefixed `gl-`, so
-`ForceFlash` on this device died with *"Unknown GL.iNet model"* — the device was
-invisible to the operator, exactly the gap documented in §2 above. Fix:
-`OpenTollGate/tollgate-installer` — add the `dlink_covr-x1860-a1` row and let
-the table decide resolution instead of a name pattern. **Until that lands, this
-router can only be installed by flashing OpenWrt 25.12.5 by hand and then running
-the wizard's package lane** (which already detects arch+target generically).
+**Note on the evidence split.** The `validated` entry rests on the operator's
+manual onboard. Separately, the **wizard path was exercised on a second COVR
+unit** and the flash + install portion succeeded — package installed, service up,
+merchant advertising. A future report should say which path it used; a wizard
+run is not interchangeable with a manual run for the purpose of the two defects
+below.
 
-**Blocker 2 (bench topology, NOT a product defect).** The wizard drives the
-router over SSH on its **LAN** address. On the serial bench the COVR's LAN port
-had `rx_packets = 0` — nothing cabled to it — so the wizard could not be driven
-at all. The WAN port was cabled and had internet. *Check the LAN cable before
-concluding anything about the wizard.*
+#### Open defect 1 — the wizard cannot flash a non-GL board (fix in review)
 
-**Trap found on this device.** Dropbear arrived with `PasswordAuth=off` **and**
-`RootPasswordAuth=off` (publickey-only) with an `authorized_keys` entry that
-matched no key in our fleet. Serial console is therefore the only way in until
-password auth is enabled. Recorded so the next person does not spend an hour on
-"SSH is broken".
+The wizard's firmware table is GL.iNet-only and `glModelFromBoard` refused any
+board not prefixed `gl-`, so `ForceFlash` on `dlink,covr-x1860-a1` died with
+*"Unknown GL.iNet model"* and the device was invisible — exactly the gap
+documented in §2 above ("a published asset with no wizard entry is invisible").
+
+Fix: `OpenTollGate/tollgate-installer` — add the `dlink_covr-x1860-a1` row and
+let the table decide resolution instead of a name pattern.
+
+**Workaround until it lands:** flash OpenWrt 25.12.5 by hand, then use the
+wizard's package lane, which already detects arch+target generically.
+
+#### Open defect 2 — the wizard's post-flash and post-restart verification is broken
+
+Two separate failures, both of which report a **false negative** on a run that
+actually succeeded:
+
+1. **After `sysupgrade`, the wizard reports failure.** It reconnects mid-reboot
+   and reads the *stale* OS, so a successful flash is reported as failed.
+2. **After the service restart it never reconnects.** The install step reloads
+   router networking and the box legitimately **moves to `br-private`
+   (`192.168.78.1`)** — but the wizard keeps retrying the old LAN address and
+   gives up, then reports that it could not verify version/branding/config.
+   All of those had in fact applied.
+
+The wizard's own log calls the transport death "expected", so the retry logic
+knows about the reload — it just does not know about the re-address.
+
+#### Traps measured on this device line
+
+- **Dropbear can be publickey-only.** On one unit it came up with
+  `PasswordAuth 'off'` **and** `RootPasswordAuth 'off'`, carrying an
+  `authorized_keys` entry matching no key in our fleet. Serial console was the
+  only way in until password auth was enabled over serial.
+- **`sysupgrade -n` regenerates the SSH host key**, so any pinned fingerprint
+  must be re-verified after every flash. Verify it against the router's **own
+  console** (`dropbearkey -y -f /etc/dropbear/dropbear_ed25519_host_key`), never
+  by accepting the change — a changed key is indistinguishable from a MITM
+  otherwise.
+- **`192.168.1.1` is not an identity.** The COVR's default LAN address can
+  collide with another router on the same segment; during this work a GL.iNet
+  MT6000 was also answering on `192.168.1.1` and a deploy reached the wrong box.
+  Pin by MAC before any destructive step, and prefer an unambiguous address.
+
 
 ## How to add your result (open a PR)
 
