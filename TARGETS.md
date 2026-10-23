@@ -38,7 +38,7 @@ up; `—` = not yet attempted.
 | `mips_24kc` | `ath79-nand` | GL.iNet AR300M `-nor` / `-nand` | — | — | rc6 | newly un-parked in rc6 (target-qualified names end the arch-only collision) |
 | `aarch64_cortex-a72` | `bcm27xx-bcm2711` | Raspberry Pi 4 family | — | — | rc6 | |
 | `arm_cortex-a7_neon-vfpv4` | `bcm27xx-bcm2709` | Raspberry Pi 2 family | — | — | rc6 | arch is `…_neon-vfpv4` (the target's package arch), not bare `arm_cortex-a7` |
-| `mipsel_24kc` | `ramips-mt7621` | MT7621 routers · **D-Link COVR-X1860** | c08r4d0r (manual) | 2026-10-23 | v0.6.0 | COVR-X1860 **installed and working** — see "Devices in validation" below for the full evidence trail. Target is the full path `ramips-mt7621`. A second COVR unit was onboarded end-to-end by hand and confirmed working; the wizard path (flash → install) is also proven, but its post-restart verification is broken — details below |
+| `mipsel_24kc` | `ramips-mt7621` | MT7621 routers · **D-Link COVR-X1860** | c08r4d0r (manual) | 2026-10-23 | v0.6.0 | COVR-X1860 **installed and working** — see "Device notes" below for the full evidence trail. Target is the full path `ramips-mt7621`. A second COVR unit was onboarded end-to-end by hand and confirmed working; the wizard path (flash → install) is also proven, but its post-restart verification is broken — details below |
 | `mips64_octeonplus` | `octeon-generic` | Octeon boards | — | — | rc6 | |
 | `x86_64` | `x86-64` | x86 VMs / boxes | — | — | rc6 | |
 
