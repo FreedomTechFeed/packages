@@ -1007,6 +1007,17 @@ wifi reload 2>/dev/null || true
 /etc/init.d/firewall reload 2>/dev/null || true
 /etc/init.d/dnsmasq restart 2>/dev/null || true
 /etc/init.d/uhttpd restart 2>/dev/null || true
+# Fail loud when the captive portal cannot serve: an aborted opkg/apk
+# transaction can orphan-remove runtime deps and leave zero-byte husks
+# (nodogsplash binary/init). Installing "successfully" with a dead portal
+# hides the damage until every downstream test fails opaquely.
+if [ ! -s /usr/bin/nodogsplash ] || [ ! -s /etc/init.d/nodogsplash ]; then
+	echo "ERROR: nodogsplash binary or init script is empty (zero bytes) —" >&2
+	echo "the install transaction likely aborted and orphan-removed runtime" >&2
+	echo "deps. Reinstall nodogsplash, then reinstall this package." >&2
+	echo "Refusing to claim success with a dead portal." >&2
+	exit 1
+fi
 /etc/init.d/nodogsplash restart 2>/dev/null || true
 
 if [ -x /etc/init.d/tollgate-wrt ]; then
