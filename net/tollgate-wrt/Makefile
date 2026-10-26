@@ -803,7 +803,7 @@ define Package/tollgate-wrt
 	SUBMENU:=Captive Portals
 	TITLE:=TollGate - Cashu-powered WiFi Payment Gateway
 	URL:=https://tollgate.me
-	DEPENDS:=+nodogsplash +jq +ca-bundle $(GO_ARCH_DEPENDS)
+	DEPENDS:=+nodogsplash +jq +ca-bundle +kmod-loop +kmod-fs-ext4 +e2fsprogs +losetup $(GO_ARCH_DEPENDS)
 endef
 
 define Package/tollgate-wrt/description
